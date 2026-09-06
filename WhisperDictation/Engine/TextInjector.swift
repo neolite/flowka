@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -9,6 +10,93 @@ final class TextInjector: @unchecked Sendable {
 
     init() {
         source = CGEventSource(stateID: .hidSystemState)
+    }
+
+    // MARK: - Вставка через буфер обмена
+
+    /// Основной способ доставки текста в активное приложение.
+    ///
+    /// Почему не синтетические клавиши: Apple прямо документирует, что
+    /// приложение вправе проигнорировать Unicode-строку синтетического события
+    /// клавиатуры. На практике это и происходит в Electron-приложениях и
+    /// терминалах, а на длинной кириллице ещё и упирается в размер события.
+    /// Буфер обмена + ⌘V — то, что работает везде.
+    ///
+    /// Прежний путь `type(text:)` сохранён как **явный** запасной вариант.
+    /// Автоматически переключаться на него нельзя: если первая вставка всё же
+    /// сработала, вторая продублирует текст.
+    func paste(text: String) {
+        guard !text.isEmpty else { return }
+
+        typingQueue.async { [source] in
+            let pasteboard = NSPasteboard.general
+            let saved = Self.snapshot(of: pasteboard)
+
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+            let ourChangeCount = pasteboard.changeCount
+
+            // Зажатый модификатор превратит ⌘V во что-то другое: пользователь
+            // держит хоткей (правый ⌥) и мог не успеть его отпустить.
+            Self.waitForModifiersRelease()
+
+            guard let down = CGEvent(keyboardEventSource: source, virtualKey: Self.vKeyCode, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: source, virtualKey: Self.vKeyCode, keyDown: false)
+            else { return }
+
+            down.flags = .maskCommand
+            up.flags = .maskCommand
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+
+            // Восстановление буфера — эвристика: отправка ⌘V не подтверждает,
+            // что приложение уже прочитало содержимое. Ждём, затем возвращаем
+            // прежнее содержимое, но только если никто не писал в буфер после
+            // нас — иначе мы затрём чужую запись.
+            Thread.sleep(forTimeInterval: 0.15)
+            guard pasteboard.changeCount == ourChangeCount else { return }
+            Self.restore(saved, to: pasteboard)
+        }
+    }
+
+    /// Виртуальный код клавиши `V` в раскладке ANSI. Он физический, от
+    /// текущей раскладки не зависит, поэтому русская раскладка ⌘V не ломает.
+    private static let vKeyCode: CGKeyCode = 9
+
+    /// Снимок буфера: пары «тип → данные» для каждого элемента. Сами
+    /// `NSPasteboardItem` после `clearContents()` становятся недействительными,
+    /// поэтому сохраняем именно данные и позже создаём новые элементы.
+    private static func snapshot(of pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
+        (pasteboard.pasteboardItems ?? []).map { item in
+            var contents: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) { contents[type] = data }
+            }
+            return contents
+        }
+    }
+
+    private static func restore(_ snapshot: [[NSPasteboard.PasteboardType: Data]], to pasteboard: NSPasteboard) {
+        pasteboard.clearContents()
+        guard !snapshot.isEmpty else { return }
+        let items: [NSPasteboardItem] = snapshot.map { contents in
+            let item = NSPasteboardItem()
+            for (type, data) in contents { item.setData(data, forType: type) }
+            return item
+        }
+        pasteboard.writeObjects(items)
+    }
+
+    /// Ждёт, пока пользователь отпустит модификаторы. Ограничено по времени:
+    /// зависший модификатор не должен заблокировать вставку навсегда.
+    private static func waitForModifiersRelease(timeout: TimeInterval = 0.5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        let watched: CGEventFlags = [.maskCommand, .maskAlternate, .maskControl, .maskShift]
+        while Date() < deadline {
+            let flags = CGEventSource.flagsState(.combinedSessionState)
+            if flags.intersection(watched).isEmpty { return }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
     }
 
     /// Enqueue `text` to be typed at the current cursor position via CGEvent.

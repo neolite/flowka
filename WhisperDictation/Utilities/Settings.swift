@@ -29,6 +29,20 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
         case dictationLanguage
         case glossaryEnabled
         case glossaryRules
+        case useClipboardInsertion
+    }
+
+    // MARK: - Способ вставки
+
+    /// Вставлять через буфер обмена и ⌘V вместо синтетических клавиш.
+    ///
+    /// По умолчанию включено: синтетические Unicode-события приложение вправе
+    /// проигнорировать (это документировано Apple), и в Electron-приложениях
+    /// с терминалами так и происходит. Побочный эффект режима — текст
+    /// появляется целиком после отпускания клавиши, а не по мере распознавания.
+    var useClipboardInsertion: Bool {
+        get { defaults.object(forKey: Key.useClipboardInsertion.rawValue) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.useClipboardInsertion.rawValue); objectWillChange.send() }
     }
 
     // MARK: - Язык диктовки

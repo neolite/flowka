@@ -469,6 +469,12 @@ final class DictationEngine {
             // (segment callbacks are serial) and read after `await` returns, which
             // happens-after all writes — so @unchecked Sendable is sound.
             let collected = TranscriptCollector()
+
+            // В режиме буфера обмена текст доставляется одним куском после
+            // распознавания: посегментная вставка через ⌘V означала бы
+            // перезапись буфера на каждую фразу и заметные паузы.
+            let useClipboard = AppSettings.shared.useClipboardInsertion
+
             do {
                 _ = try await bridge.transcribe(
                     audioBuffer: audioBuffer,
@@ -477,8 +483,10 @@ final class DictationEngine {
                 ) { segment in
                     let corrected = TextPipeline.shared.process(segment)
                     // Never log transcribed content — it's the user's private dictation.
-                    injector.type(text: collected.joinAndAppend(corrected))
+                    let delta = collected.joinAndAppend(corrected)
+                    if !useClipboard { injector.type(text: delta) }
                 }
+                if useClipboard { injector.paste(text: collected.text) }
             } catch let error as WhisperError where error.isCancellation {
                 // User-intended cancel: reset to idle without surfacing an error.
                 // Any segments already decoded were already typed — that's acceptable.

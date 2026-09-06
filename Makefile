@@ -1,7 +1,22 @@
 SDK := $(shell xcrun --sdk macosx --show-sdk-path)
 MIN_MACOS := 14.0
 BUILD_DIR := build
-APP_BUNDLE := $(BUILD_DIR)/WhisperDictation.app
+APP_NAME := Flowka
+BUNDLE_ID := com.rafkat.flowka
+APP_BUNDLE := $(BUILD_DIR)/$(APP_NAME).app
+
+# Подпись кода.
+#
+# TCC (Accessibility, Microphone) привязывает выданные разрешения к
+# ИДЕНТИЧНОСТИ ПОДПИСИ. Ad-hoc подпись (`codesign --sign -`) порождает новую
+# идентичность при каждой сборке, поэтому macOS молча теряет разрешения после
+# каждой пересборки — а выглядит это как «приложение перестало печатать».
+#
+# Поэтому подписываем стабильным Development-сертификатом, если он есть.
+# Если сертификата нет, откатываемся на ad-hoc, но предупреждаем: работать
+# будет, разрешения переживать пересборку — нет.
+SIGN_IDENTITY := $(shell security find-identity -v -p codesigning 2>/dev/null | \
+	grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')
 
 # Build universal binary (arm64 + x86_64). The Swift binary is built once per
 # architecture and then merged with `lipo`. whisper.cpp's static libs are also
@@ -74,11 +89,13 @@ app: $(BUILD_DIR)/WhisperDictation
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	@cp $(BUILD_DIR)/WhisperDictation "$(APP_BUNDLE)/Contents/MacOS/"
+	@# EXECUTABLE_NAME остаётся WhisperDictation: так называется файл, который
+	@# кладётся в Contents/MacOS, и CFBundleExecutable обязан ему соответствовать.
 	@sed \
 		-e 's/$$(EXECUTABLE_NAME)/WhisperDictation/g' \
-		-e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/com.sampop.WhisperDictation/g' \
-		-e 's/$$(PRODUCT_NAME)/WhisperDictation/g' \
-		-e 's/$$(DEVELOPMENT_LANGUAGE)/en/g' \
+		-e 's/$$(PRODUCT_BUNDLE_IDENTIFIER)/$(BUNDLE_ID)/g' \
+		-e 's/$$(PRODUCT_NAME)/$(APP_NAME)/g' \
+		-e 's/$$(DEVELOPMENT_LANGUAGE)/ru/g' \
 		WhisperDictation/Info.plist > "$(APP_BUNDLE)/Contents/Info.plist"
 	@# Add LSMinimumSystemVersion (required for macOS to recognize the app)
 	@/usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string $(MIN_MACOS)" "$(APP_BUNDLE)/Contents/Info.plist" 2>/dev/null || \
@@ -86,8 +103,15 @@ app: $(BUILD_DIR)/WhisperDictation
 	@echo "APPL????" > "$(APP_BUNDLE)/Contents/PkgInfo"
 	@# Generate app icon
 	@python3 scripts/generate-icon.py "$(APP_BUNDLE)/Contents/Resources" 2>/dev/null || true
-	@# Ad-hoc code sign so macOS will run it
-	@codesign --force --deep --sign - "$(APP_BUNDLE)"
+	@# Подпись: стабильная идентичность сохраняет выданные TCC-разрешения
+	@if [ -n "$(SIGN_IDENTITY)" ]; then \
+		echo "[sign] $(SIGN_IDENTITY)"; \
+		codesign --force --deep --options runtime --sign "$(SIGN_IDENTITY)" "$(APP_BUNDLE)"; \
+	else \
+		echo "[sign] ВНИМАНИЕ: Development-сертификат не найден, подпись ad-hoc."; \
+		echo "[sign] Разрешения Accessibility и Microphone будут теряться при каждой пересборке."; \
+		codesign --force --deep --sign - "$(APP_BUNDLE)"; \
+	fi
 	@echo "Built $(APP_BUNDLE)"
 
 run: app
