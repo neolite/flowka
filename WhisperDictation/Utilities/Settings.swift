@@ -222,7 +222,10 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
         Обсуждаем код. Сделай pull request и merge в master. \
         Это Effector store, проверь useUnit и useState. \
         Задеплой на staging, потом на production. \
-        Открой Figma и посмотри в Xcode. Запусти npm run build.
+        Открой Figma и посмотри в Xcode. Запусти npm run build. \
+        Имена: Айгуль, Айнур, Ильнур, Гульнара, Рустам, Динара. \
+        Фамилии: Сафиуллин, Гаязов, Хабибуллин, Валиев, Нуриев. \
+        Города: Казань, Зеленодольск, Челны, Арск.
         """
 
     /// Прежний англоязычный промпт. Оставлен для режима `en`: там он уместен,
