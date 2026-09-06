@@ -57,12 +57,14 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     /// Вставлять через буфер обмена и ⌘V вместо синтетических клавиш.
     ///
-    /// По умолчанию включено: синтетические Unicode-события приложение вправе
-    /// проигнорировать (это документировано Apple), и в Electron-приложениях
-    /// с терминалами так и происходит. Побочный эффект режима — текст
-    /// появляется целиком после отпускания клавиши, а не по мере распознавания.
+    /// Дефолт ВЫКЛ (прямая печать): живой режим печатает текст по мере
+    /// распознавания — это несовместимо с clipboard-вставкой, которая
+    /// выкладывает всё целиком только после отпускания клавиши. Компромисс:
+    /// синтетические Unicode-события приложение вправе проигнорировать (это
+    /// документировано Apple) — в Electron-приложениях с терминалами так и
+    /// бывает; там включи этот тумблер вручную, но живого набегания уже не будет.
     var useClipboardInsertion: Bool {
-        get { defaults.object(forKey: Key.useClipboardInsertion.rawValue) as? Bool ?? true }
+        get { defaults.object(forKey: Key.useClipboardInsertion.rawValue) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.useClipboardInsertion.rawValue); objectWillChange.send() }
     }
 
@@ -191,7 +193,10 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     /// pauses instead of everything at stop. Default false. Stores intent —
     /// the engine additionally requires the VAD model on disk per session.
     var liveDictationEnabled: Bool {
-        get { defaults.bool(forKey: Key.liveDictationEnabled.rawValue) }
+        // Дефолт ВКЛ: с Parakeet v3 живой режим набегает по фразам. Гейт
+        // безопасный — нет VAD-модели или движок без потоковой обвязки → тихий
+        // фолбэк в обычный режим (см. startLiveSessionIfEnabled).
+        get { defaults.object(forKey: Key.liveDictationEnabled.rawValue) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.liveDictationEnabled.rawValue); objectWillChange.send() }
     }
 

@@ -207,15 +207,27 @@ struct MenuBarView: View {
     }
 
     private var modelShortName: String {
-        let m = settings.selectedModel
-        // "base.en-q5_1" → "Base Q5", "small.en" → "Small"
-        let base = m.split(separator: ".").first.map(String.init) ?? m
-        let isQuantized = m.contains("q5") || m.contains("q8")
-        return base.capitalized + (isQuantized ? " Q5" : "")
+        engineBadgeLabel(engine: settings.asrEngine, whisperModel: settings.selectedModel)
     }
 
     private var hotkeyLabel: String {
         KeyCodeNames.shortLabel(for: settings.hotkeyKeyCode)
+    }
+}
+
+// MARK: - Badge label
+
+/// Короткая подпись движка для бейджа в меню-баре. Отражает ВЫБРАННЫЙ движок:
+/// паракет → «Parakeet v3», whisper → прежнее дружелюбное имя модели
+/// ("base.en-q5_1" → "Base Q5"). Чистая функция — тестируется без UI.
+func engineBadgeLabel(engine: AppSettings.ASREngine, whisperModel: String) -> String {
+    switch engine {
+    case .parakeetV3:
+        return "Parakeet v3"
+    case .whisper:
+        let base = whisperModel.split(separator: ".").first.map(String.init) ?? whisperModel
+        let isQuantized = whisperModel.contains("q5") || whisperModel.contains("q8")
+        return base.capitalized + (isQuantized ? " Q5" : "")
     }
 }
 
