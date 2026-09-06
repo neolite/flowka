@@ -107,11 +107,11 @@ app: $(BUILD_DIR)/WhisperDictation
 	@# Подпись: стабильная идентичность сохраняет выданные TCC-разрешения
 	@if [ -n "$(SIGN_IDENTITY)" ]; then \
 		echo "[sign] $(SIGN_IDENTITY)"; \
-		codesign --force --deep --options runtime --sign "$(SIGN_IDENTITY)" "$(APP_BUNDLE)"; \
+		codesign --force --deep --options runtime --entitlements WhisperDictation/WhisperDictation.entitlements --sign "$(SIGN_IDENTITY)" "$(APP_BUNDLE)"; \
 	else \
 		echo "[sign] ВНИМАНИЕ: Development-сертификат не найден, подпись ad-hoc."; \
 		echo "[sign] Разрешения Accessibility и Microphone будут теряться при каждой пересборке."; \
-		codesign --force --deep --sign - "$(APP_BUNDLE)"; \
+		codesign --force --deep --options runtime --entitlements WhisperDictation/WhisperDictation.entitlements --sign - "$(APP_BUNDLE)"; \
 	fi
 	@echo "Built $(APP_BUNDLE)"
 
