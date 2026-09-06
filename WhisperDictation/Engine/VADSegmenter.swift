@@ -17,6 +17,10 @@ struct VADChunkGate {
     static let minSpeechWindows = 10
     /// Force a boundary before Whisper's 30 s hard window: ~25 s.
     static let ceilingWindows = 781
+    /// A ceiling boundary must represent meaningful progress through the
+    /// current chunk. Earlier minima are ignored in favor of a cut near the
+    /// ceiling, rather than producing a tiny repeated chunk.
+    static let minimumCeilingProgressWindows = ceilingWindows / 2
 
     enum Event: Equatable {
         case none
@@ -36,7 +40,13 @@ struct VADChunkGate {
     mutating func ingest(probability p: Float) -> Event {
         let index = windowCount
         windowCount += 1
-        if p < minProb { minProb = p; minProbIndex = index }
+        // Only minima after meaningful progress may select a ceiling cut.
+        // Prefer the latest window for ties so a flat stream does not select
+        // its first window as the boundary.
+        if index >= Self.minimumCeilingProgressWindows, p <= minProb {
+            minProb = p
+            minProbIndex = index
+        }
         if p >= Self.speechThreshold {
             speechWindows += 1
             trailingSilence = 0
@@ -50,7 +60,7 @@ struct VADChunkGate {
             return hadSpeech ? .commit(chunkEndWindow: end) : .drop
         }
         if windowCount >= Self.ceilingWindows {
-            let end = max(1, minProbIndex)
+            let end = minProbIndex
             self = VADChunkGate()
             return .commit(chunkEndWindow: end)
         }

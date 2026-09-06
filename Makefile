@@ -66,6 +66,8 @@ define BUILD_SLICE
 xcrun swiftc \
 	-sdk "$(SDK)" \
 	-target $(1)-apple-macos$(MIN_MACOS) \
+	-O \
+	-whole-module-optimization \
 	-import-objc-header WhisperDictation/WhisperDictation-Bridging-Header.h \
 	-I lib -L lib \
 	$(LIBS) $(FRAMEWORKS) \
@@ -74,11 +76,11 @@ xcrun swiftc \
 	-o $(BUILD_DIR)/WhisperDictation-$(1)
 endef
 
-$(BUILD_DIR)/WhisperDictation-arm64: $(SWIFT_FILES) lib/libwhisper.a
+$(BUILD_DIR)/WhisperDictation-arm64: Makefile $(SWIFT_FILES) lib/libwhisper.a
 	@mkdir -p $(BUILD_DIR)
 	$(call BUILD_SLICE,arm64)
 
-$(BUILD_DIR)/WhisperDictation-x86_64: $(SWIFT_FILES) lib/libwhisper.a
+$(BUILD_DIR)/WhisperDictation-x86_64: Makefile $(SWIFT_FILES) lib/libwhisper.a
 	@mkdir -p $(BUILD_DIR)
 	$(call BUILD_SLICE,x86_64)
 

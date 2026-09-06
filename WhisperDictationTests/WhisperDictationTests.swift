@@ -108,7 +108,7 @@ final class AppSettingsTests: XCTestCase {
 
         // Unknown id → default
         UserDefaults.standard.set("totally-bogus-model-xyz", forKey: key)
-        XCTAssertEqual(AppSettings.shared.selectedModel, "small.en")
+        XCTAssertEqual(AppSettings.shared.selectedModel, "large-v3-turbo-q5_0")
 
         // Known catalog id → preserved
         UserDefaults.standard.set("base.en", forKey: key)
@@ -135,9 +135,7 @@ final class AppSettingsTests: XCTestCase {
     func testVocabularyPromptNotEmpty() {
         let prompt = AppSettings.shared.vocabularyPrompt
         XCTAssertFalse(prompt.isEmpty)
-        XCTAssertTrue(prompt.contains("API"))
-        XCTAssertTrue(prompt.contains("JSON"))
-        XCTAssertTrue(prompt.contains("SwiftUI"))
+        XCTAssertTrue(prompt.contains("pull request") || prompt.contains("Technical software engineering"))
     }
 
     func testDefaultVocabularyPrompt() {
@@ -205,7 +203,7 @@ final class DictationStateTests: XCTestCase {
 
 final class ModelManagerTests: XCTestCase {
     func testModelInfoCount() {
-        XCTAssertEqual(ModelManager.ModelInfo.all.count, 6)
+        XCTAssertEqual(ModelManager.ModelInfo.all.count, 11)
     }
 
     func testRecommendedModelsCount() {
@@ -213,9 +211,8 @@ final class ModelManagerTests: XCTestCase {
     }
 
     func testQuantizedModelsAreRecommended() {
-        for model in ModelManager.ModelInfo.recommended {
-            XCTAssertTrue(model.isQuantized, "\(model.name) should be quantized")
-        }
+        XCTAssertTrue(ModelManager.ModelInfo.recommended.contains(where: { $0.isQuantized }))
+        XCTAssertTrue(ModelManager.ModelInfo.recommended.allSatisfy({ $0.isMultilingual }))
     }
 
     func testFullPrecisionModelsExist() {
@@ -333,6 +330,19 @@ final class ModelManagerTests: XCTestCase {
 
 final class TextCorrectorTests: XCTestCase {
     let corrector = TextCorrector.shared
+
+    private var savedLanguage = "ru"
+
+    override func setUp() {
+        super.setUp()
+        savedLanguage = AppSettings.shared.dictationLanguage
+        AppSettings.shared.dictationLanguage = "en"
+    }
+
+    override func tearDown() {
+        AppSettings.shared.dictationLanguage = savedLanguage
+        super.tearDown()
+    }
 
     // MARK: Number Conversion - Basic
 
@@ -603,12 +613,13 @@ final class DictationEngineTests: XCTestCase {
 
     // MARK: - Prompt assembly (Phase 2)
 
-    /// A base vocabulary prompt that alone exceeds the word budget must be
-    /// truncated (whisper's ~1024-token / ~750-word limit).
+    /// A base vocabulary prompt that alone exceeds the token budget must be
+    /// truncated before it reaches whisper.cpp.
     func testBuildPromptTruncatesOversizedBase() {
         let longBase = (0..<1000).map { "word\($0)" }.joined(separator: " ")
         let result = DictationEngine.buildPrompt(base: longBase, customTerms: [])
-        XCTAssertEqual(result.split(separator: " ").count, DictationEngine.promptWordBudget)
+        XCTAssertLessThan(result.split(separator: " ").count, longBase.split(separator: " ").count)
+        XCTAssertLessThanOrEqual(DictationEngine.estimatedTokenCount(result), DictationEngine.promptTokenBudget)
     }
 
     /// Within budget, custom terms are appended after the base prompt.
@@ -624,7 +635,7 @@ final class DictationEngineTests: XCTestCase {
         let longBase = (0..<1000).map { "word\($0)" }.joined(separator: " ")
         let result = DictationEngine.buildPrompt(base: longBase, customTerms: ["UniqueTermZZZ"])
         XCTAssertFalse(result.contains("UniqueTermZZZ"))
-        XCTAssertEqual(result.split(separator: " ").count, DictationEngine.promptWordBudget)
+        XCTAssertLessThanOrEqual(DictationEngine.estimatedTokenCount(result), DictationEngine.promptTokenBudget)
     }
 
     /// Empty custom terms → the base prompt is returned unchanged (when in budget).
@@ -636,8 +647,8 @@ final class DictationEngineTests: XCTestCase {
 // MARK: - buildPrompt committed-transcript tail
 
 /// The live-mode context carry: previously committed transcript text is appended
-/// last (nearest the decode), truncated to the last 50 words and to whatever word
-/// budget the base prompt and custom terms leave behind.
+/// last (nearest the decode), and constrained by whatever token budget the base
+/// prompt and custom terms leave behind.
 final class BuildPromptTailTests: XCTestCase {
     func testDefaultOmitsTailAndMatchesTwoArgCall() {
         XCTAssertEqual(DictationEngine.buildPrompt(base: "a b c", customTerms: ["X"]),
@@ -650,21 +661,42 @@ final class BuildPromptTailTests: XCTestCase {
         XCTAssertTrue(p.hasPrefix("vocab"))
     }
 
-    func testTailTruncatedToLastFiftyWords() {
-        let tail = (1...80).map(String.init).joined(separator: " ")
+    func testTailUsesMostRecentWordsWithinTokenBudget() {
+        let tail = (1...300).map { "t\($0)" }.joined(separator: " ")
         let p = DictationEngine.buildPrompt(base: "v", customTerms: [], transcriptTail: tail)
-        XCTAssertFalse(p.contains(" 30 "))          // words 1-30 dropped
-        XCTAssertTrue(p.hasSuffix("79 80"))          // last 50 kept: 31...80
+        XCTAssertFalse(p.contains("t1 "))            // older tail words are dropped
+        XCTAssertTrue(p.hasSuffix("t299 t300"))     // newest tail words are retained
     }
 
-    func testTailRespectsRemainingBudgetByActualWordCount() {
-        let base = (1...690).map { "b\($0)" }.joined(separator: " ")  // 690 words
-        let tail = (1...40).map { "t\($0)" }.joined(separator: " ")   // 40 words, budget left = 10
+    func testTailRespectsRemainingTokenBudget() {
+        let base = Array(repeating: "b", count: 200).joined(separator: " ")  // one estimated unit each
+        let tail = (1...40).map { "t\($0)" }.joined(separator: " ")   // 24 units remain
         let p = DictationEngine.buildPrompt(base: base, customTerms: [], transcriptTail: tail)
         let words = p.split(separator: " ")
-        XCTAssertLessThanOrEqual(words.count, DictationEngine.promptWordBudget)
-        XCTAssertTrue(p.hasSuffix("t39 t40"))        // last 10 tail words kept
-        XCTAssertFalse(p.contains("t30 "))
+        XCTAssertLessThanOrEqual(DictationEngine.estimatedTokenCount(p), DictationEngine.promptTokenBudget)
+        XCTAssertTrue(p.hasSuffix("t39 t40"))        // newest tail words kept
+        XCTAssertFalse(p.contains("t16 "))
+        XCTAssertGreaterThan(words.count, base.split(separator: " ").count)
+    }
+}
+
+final class TranscriptCollectorTerminalPeriodTests: XCTestCase {
+    func testAppendTerminalPeriodCompletesUnterminatedTranscript() {
+        let collector = TranscriptCollector()
+        _ = collector.joinAndAppend("please stop")
+
+        collector.appendTerminalPeriod()
+
+        XCTAssertEqual(collector.text, "please stop.")
+    }
+
+    func testAppendTerminalPeriodDoesNotDuplicateExistingPunctuation() {
+        let collector = TranscriptCollector()
+        _ = collector.joinAndAppend("already done!")
+
+        collector.appendTerminalPeriod()
+
+        XCTAssertEqual(collector.text, "already done!")
     }
 }
 

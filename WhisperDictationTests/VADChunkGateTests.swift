@@ -52,6 +52,32 @@ final class VADChunkGateTests: XCTestCase {
         XCTAssertEqual(event, .commit(chunkEndWindow: 400))
     }
 
+    func testCeilingConstantSpeechCommitsNearTheCeiling() {
+        var gate = VADChunkGate()
+        var event = VADChunkGate.Event.none
+        for _ in 0..<VADChunkGate.ceilingWindows {
+            event = gate.ingest(probability: 0.9)
+        }
+
+        XCTAssertEqual(event, .commit(chunkEndWindow: VADChunkGate.ceilingWindows - 1))
+    }
+
+    func testCeilingIgnoresEarlyMinimumButKeepsLaterDip() {
+        var gate = VADChunkGate()
+        var event = VADChunkGate.Event.none
+        for i in 0..<VADChunkGate.ceilingWindows {
+            let probability: Float
+            switch i {
+            case 1: probability = 0.1
+            case 600: probability = 0.2
+            default: probability = 0.9
+            }
+            event = gate.ingest(probability: probability)
+        }
+
+        XCTAssertEqual(event, .commit(chunkEndWindow: 600))
+    }
+
     func testGateIsFreshAfterCommit() {
         var gate = VADChunkGate()
         _ = feed(&gate, speech: 30, silence: VADChunkGate.pauseWindows)   // commit + reset
