@@ -32,10 +32,18 @@ final class TextCorrector: @unchecked Sendable {
         #endif
 
         var result = text
-        if AppSettings.shared.numberConversionEnabled {
+
+        // Преобразование числительных словами и правка аббревиатур построены
+        // на английских списках («twenty five» → 25, «api» → API). На русской
+        // речи они в лучшем случае бездействуют, в худшем портят текст,
+        // поэтому включаются только для английского.
+        let isEnglish = AppSettings.shared.dictationLanguage == "en"
+        if isEnglish, AppSettings.shared.numberConversionEnabled {
             result = convertWordsToNumbers(result)
         }
-        result = fixAcronymsAndTerms(result)
+        if isEnglish {
+            result = fixAcronymsAndTerms(result)
+        }
         result = fixCustomTerms(result)
         result = fixCapitalization(result, atSentenceStart: context.atSentenceStart)
         result = fixPunctuation(result, appendPeriod: context.appendPeriod)

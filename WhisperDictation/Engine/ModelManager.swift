@@ -87,6 +87,52 @@ final class ModelManager: ObservableObject, @unchecked Sendable {
             sha256: "76733e26ad8fe1c7a5bf7531a9d41917b2adc0f20f2e4f5531688a8c6cd88eb0"
         )
 
+        // MARK: - Мультиязычные модели
+        //
+        // Модели без суффикса `.en` понимают русский. Английские варианты выше
+        // на русской речи не работают вовсе — это не вопрос качества, они
+        // физически не содержат нужного словаря.
+        //
+        // Хеши взяты из HuggingFace LFS API, не из документации.
+
+        static let largeV3Turbo = ModelInfo(
+            name: "Large v3 Turbo (мультиязычная)", fileName: "ggml-large-v3-turbo.bin",
+            size: "1.6 GB", speed: "Быстрая", accuracy: "Высокая",
+            url: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin")!,
+            isQuantized: false,
+            sha256: "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69"
+        )
+        static let largeV3TurboQ5 = ModelInfo(
+            name: "Large v3 Turbo Q5 (мультиязычная)", fileName: "ggml-large-v3-turbo-q5_0.bin",
+            size: "547 MB", speed: "Быстрая", accuracy: "Высокая",
+            url: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin")!,
+            isQuantized: true,
+            sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+        )
+        /// Полный large-v3: 32 слоя декодера против 4 у turbo. Медленнее, но
+        /// служит эталоном качества при замерах сохранности латиницы.
+        static let largeV3Q5 = ModelInfo(
+            name: "Large v3 Q5 (мультиязычная)", fileName: "ggml-large-v3-q5_0.bin",
+            size: "1.0 GB", speed: "Медленная", accuracy: "Эталонная",
+            url: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-q5_0.bin")!,
+            isQuantized: true,
+            sha256: "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1"
+        )
+        static let mediumQ5 = ModelInfo(
+            name: "Medium Q5 (мультиязычная)", fileName: "ggml-medium-q5_0.bin",
+            size: "514 MB", speed: "Средняя", accuracy: "Хорошая",
+            url: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium-q5_0.bin")!,
+            isQuantized: true,
+            sha256: "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f"
+        )
+        static let smallQ5 = ModelInfo(
+            name: "Small Q5 (мультиязычная)", fileName: "ggml-small-q5_1.bin",
+            size: "181 MB", speed: "Очень быстрая", accuracy: "Средняя",
+            url: URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin")!,
+            isQuantized: true,
+            sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
+        )
+
         // VAD model
         static let vadSilero = ModelInfo(
             name: "Silero VAD v5", fileName: "ggml-silero-v5.1.2.bin",
@@ -96,8 +142,17 @@ final class ModelManager: ObservableObject, @unchecked Sendable {
             sha256: "29940d98d42b91fbd05ce489f3ecf7c72f0a42f027e4875919a28fb4c04ea2cf"
         )
 
-        static let all: [ModelInfo] = [baseEnQ5, smallEnQ5, mediumEnQ5, baseEn, smallEn, mediumEn]
-        static let recommended: [ModelInfo] = [baseEnQ5, smallEnQ5, mediumEnQ5]
+        static let all: [ModelInfo] = [
+            largeV3TurboQ5, largeV3Turbo, largeV3Q5, mediumQ5, smallQ5,
+            baseEnQ5, smallEnQ5, mediumEnQ5, baseEn, smallEn, mediumEn,
+        ]
+
+        /// Мультиязычные идут первыми: основной сценарий — русский с
+        /// латинскими терминами, и английская модель его не покрывает.
+        static let recommended: [ModelInfo] = [largeV3TurboQ5, largeV3Turbo, mediumQ5]
+
+        /// Модели без суффикса `.en` в имени файла.
+        var isMultilingual: Bool { !fileName.contains(".en") }
     }
 
     var modelsDirectory: URL {

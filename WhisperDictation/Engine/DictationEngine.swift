@@ -297,36 +297,85 @@ final class DictationEngine {
     /// Whisper's initial_prompt is capped at ~1024 tokens (~750 words). Exceeding it
     /// triggers `whisper_tokenize: too many resulting tokens` and degrades accuracy
     /// (see CLAUDE.md). We budget 700 words as a safe margin.
-    static let promptWordBudget = 700
-
-    /// Builds the whisper initial_prompt from the base vocabulary prompt plus the
-    /// user's custom terms, staying within `promptWordBudget` words. The base prompt
-    /// is truncated first if it alone exceeds the budget; custom terms then fill any
-    /// remaining word budget. Pure/static so it is unit-testable without the engine.
+    /// Бюджет initial_prompt в **токенах**, а не в словах.
     ///
-    /// - Parameter transcriptTail: text already committed in this dictation, used by
-    ///   live mode so each chunk decodes with the preceding words as context. Empty
-    ///   (the default) leaves the prompt byte-identical to the non-live build.
+    /// whisper.cpp принимает промпт длиной до `n_text_ctx / 2`, что для всех
+    /// стандартных моделей равно 224 токенам. Прежнее значение — 700 *слов* —
+    /// завышало реальную ёмкость в разы: избыток молча отбрасывался, а на
+    /// кириллице это происходило почти сразу.
+    static let promptTokenBudget = 224
+
+    /// Оценка длины в токенах BPE-словаря Whisper.
+    ///
+    /// Точный подсчёт делает `whisper_tokenize`, но он требует загруженного
+    /// контекста, а эта функция намеренно чистая и тестируется без движка.
+    /// Поэтому оценка **сознательно завышена**: недооценить бюджет значит
+    /// потерять хвост промпта незаметно, переоценить — лишь укоротить его.
+    ///
+    /// Кириллица в словаре Whisper дробится примерно вдвое мельче латиницы,
+    /// отсюда разные веса.
+    static func estimatedTokenCount(_ text: String) -> Int {
+        var units = 0.0
+        for scalar in text.unicodeScalars {
+            switch scalar.value {
+            case 0x0400...0x04FF, 0x0500...0x052F:  // кириллица
+                units += 0.5
+            case 0x0000...0x007F:                    // латиница, цифры, пунктуация
+                units += 0.25
+            default:
+                units += 0.5
+            }
+        }
+        return Int(units.rounded(.up))
+    }
+
+    /// Собирает initial_prompt из базового промпта, пользовательских терминов и
+    /// хвоста уже надиктованного текста, укладываясь в `promptTokenBudget`.
+    /// Порядок приоритета при нехватке бюджета: база → термины → хвост.
+    /// Чистая и статическая, поэтому тестируется без движка.
+    ///
+    /// - Parameter transcriptTail: уже зафиксированный в этой диктовке текст.
+    ///   Живой режим передаёт его, чтобы следующий кусок декодировался с
+    ///   контекстом предыдущих слов.
     static func buildPrompt(base: String, customTerms: [String], transcriptTail: String = "") -> String {
-        let baseWords = base.split(separator: " ")
-        let cappedBase = baseWords.count > promptWordBudget
-            ? baseWords.prefix(promptWordBudget).joined(separator: " ")
-            : base
+        var remaining = promptTokenBudget
 
-        let termBudget = max(0, promptWordBudget - baseWords.count)
-        let termsToAdd = Array(customTerms.prefix(termBudget))
-        let withTerms = termsToAdd.isEmpty
-            ? cappedBase
-            : cappedBase + ", " + termsToAdd.joined(separator: ", ")
+        // База: обрезается по словам, но считается по токенам.
+        var result = ""
+        for word in base.split(separator: " ") {
+            let cost = estimatedTokenCount(String(word) + " ")
+            guard remaining - cost >= 0 else { break }
+            remaining -= cost
+            result += result.isEmpty ? String(word) : " " + word
+        }
 
-        // Committed-transcript tail: budgeted by ACTUAL word count (terms above
-        // deliberately keep their historical one-unit-each accounting), capped
-        // at 50 words, appended last — closest to the decode.
+        // Термины: каждый добавляется целиком или не добавляется вовсе —
+        // обрезанный посреди слова термин бесполезен как подсказка.
+        var addedTerms: [String] = []
+        for term in customTerms {
+            let cost = estimatedTokenCount(term + ", ")
+            guard remaining - cost >= 0 else { break }
+            remaining -= cost
+            addedTerms.append(term)
+        }
+        if !addedTerms.isEmpty {
+            result += (result.isEmpty ? "" : ", ") + addedTerms.joined(separator: ", ")
+        }
+
+        // Хвост стенограммы идёт последним — он ближе всего к декодируемому
+        // фрагменту и потому влияет сильнее прочего.
         let tailWords = transcriptTail.split(separator: " ")
-        let usedWords = min(baseWords.count, promptWordBudget) + termsToAdd.count
-        let tailBudget = min(50, max(0, promptWordBudget - usedWords))
-        guard tailBudget > 0, !tailWords.isEmpty else { return withTerms }
-        return withTerms + " " + tailWords.suffix(tailBudget).joined(separator: " ")
+        guard !tailWords.isEmpty, remaining > 0 else { return result }
+
+        var tail: [Substring] = []
+        for word in tailWords.reversed() {
+            let cost = estimatedTokenCount(String(word) + " ")
+            guard remaining - cost >= 0 else { break }
+            remaining -= cost
+            tail.insert(word, at: 0)
+        }
+        guard !tail.isEmpty else { return result }
+        return result.isEmpty ? tail.joined(separator: " ") : result + " " + tail.joined(separator: " ")
     }
 
     // MARK: - Recording Flow
@@ -421,8 +470,12 @@ final class DictationEngine {
             // happens-after all writes — so @unchecked Sendable is sound.
             let collected = TranscriptCollector()
             do {
-                _ = try await bridge.transcribe(audioBuffer: audioBuffer, prompt: prompt) { segment in
-                    let corrected = TextCorrector.shared.correct(segment)
+                _ = try await bridge.transcribe(
+                    audioBuffer: audioBuffer,
+                    prompt: prompt,
+                    language: AppSettings.shared.dictationLanguage
+                ) { segment in
+                    let corrected = TextPipeline.shared.process(segment)
                     // Never log transcribed content — it's the user's private dictation.
                     injector.type(text: collected.joinAndAppend(corrected))
                 }
@@ -551,6 +604,7 @@ final class DictationEngine {
                     _ = try await bridge.transcribe(
                         audioBuffer: samples,
                         prompt: prompt,
+                        language: AppSettings.shared.dictationLanguage,
                         cancelFlag: sessionFlag,
                         vad: isResidual   // chunks are pre-trimmed; residual is raw
                     ) { segment in
@@ -558,7 +612,7 @@ final class DictationEngine {
                             atSentenceStart: collected.atSentenceStart,
                             appendPeriod: false   // termination is the stop-time rule
                         )
-                        let corrected = TextCorrector.shared.correct(segment, context: context)
+                        let corrected = TextPipeline.shared.process(segment, context: context)
                         guard !corrected.isEmpty else { return }
                         injector.type(text: collected.joinAndAppend(corrected))
                     }

@@ -710,7 +710,7 @@ private struct VocabularySection: View {
                         .foregroundStyle(.tertiary)
                     Spacer()
                     Button("Reset") {
-                        settings.vocabularyPrompt = AppSettings.defaultVocabularyPrompt
+                        settings.vocabularyPrompt = settings.defaultPromptForCurrentLanguage
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

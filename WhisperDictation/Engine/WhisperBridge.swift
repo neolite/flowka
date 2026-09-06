@@ -145,9 +145,13 @@ final class WhisperBridge: @unchecked Sendable {
     /// live callers cancel by flipping the shared flag directly.
     ///
     /// `vad: false` skips whisper's internal VAD for this call only.
+    /// `language` — код языка для whisper (`ru`, `en`, либо `auto` для
+    /// автоопределения). Раньше здесь было жёстко зашито `"en"`, из-за чего
+    /// смена файла модели на мультиязычную русский всё равно не включала.
     func transcribe(
         audioBuffer: [Float],
         prompt: String = "",
+        language: String = "ru",
         cancelFlag externalFlag: CancellationFlag? = nil,
         vad: Bool = true,
         onSegment: (@Sendable (String) -> Void)? = nil
@@ -164,7 +168,7 @@ final class WhisperBridge: @unchecked Sendable {
                     return
                 }
                 do {
-                    let result = try self.runInference(audioBuffer: audioBuffer, prompt: prompt, vadEnabled: vad, onSegment: onSegment, cancelFlag: cancelFlag)
+                    let result = try self.runInference(audioBuffer: audioBuffer, prompt: prompt, language: language, vadEnabled: vad, onSegment: onSegment, cancelFlag: cancelFlag)
                     continuation.resume(returning: result)
                 } catch {
                     continuation.resume(throwing: error)
@@ -218,12 +222,33 @@ final class WhisperBridge: @unchecked Sendable {
         cancelLock.unlock()
     }
 
+    /// Паразитные фразы, которые Whisper выдаёт на тишине и шуме. Они не
+    /// случайны: модель обучена в том числе на субтитрах YouTube, поэтому
+    /// «галлюцинирует» концовками роликов. Набор строго языковой — английский
+    /// фильтр на русской речи не ловит ничего.
+    static func hallucinationPattern(for language: String) -> String {
+        switch language {
+        case "ru":
+            return "(Продолжение следует|Субтитры сделал|Субтитры создавал|"
+                + "Редактор субтитров|Корректор|Спасибо за просмотр|"
+                + "Подписывайтесь на канал|Ставьте лайки|ПОДПИСЫВАЙТЕСЬ)"
+        case "en":
+            return "(Thank you|Thanks for watching|Please subscribe|you)"
+        default:
+            // Для `auto` объединяем оба набора: язык заранее неизвестен.
+            return "(Продолжение следует|Субтитры сделал|Субтитры создавал|"
+                + "Редактор субтитров|Спасибо за просмотр|Подписывайтесь на канал|"
+                + "Thank you|Thanks for watching|Please subscribe)"
+        }
+    }
+
     /// Synchronous inference body. MUST be called on `queue` — the whisper C context
     /// is only ever touched from that queue (thread-safety contract). Extracted from
     /// the former `queue.sync` closure so `transcribe` can bridge it to async.
     private func runInference(
         audioBuffer: [Float],
         prompt: String,
+        language: String,
         vadEnabled: Bool,
         onSegment: (@Sendable (String) -> Void)?,
         cancelFlag: CancellationFlag
@@ -243,8 +268,8 @@ final class WhisperBridge: @unchecked Sendable {
         }
 
         // Allocate C strings (freed in defer)
-        let langCStr = strdup("en")
-        let suppressCStr = strdup("(Thank you|Thanks for watching|Please subscribe|you)")
+        let langCStr = strdup(language)
+        let suppressCStr = strdup(Self.hallucinationPattern(for: language))
         let promptCStr = prompt.isEmpty ? nil : strdup(prompt)
         var vadPathCStr: UnsafeMutablePointer<CChar>?
 

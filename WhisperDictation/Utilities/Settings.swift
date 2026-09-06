@@ -26,6 +26,33 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
         case customTerms
         case hasCompletedOnboarding
         case liveDictationEnabled
+        case dictationLanguage
+        case glossaryEnabled
+        case glossaryRules
+    }
+
+    // MARK: - Язык диктовки
+
+    /// Код языка для whisper (`ru`, `en`) либо `auto` — тогда язык определяет
+    /// сама модель. `auto` заманчив, но на коротких фразах определение
+    /// нестабильно, поэтому по умолчанию язык зафиксирован.
+    var dictationLanguage: String {
+        get { defaults.string(forKey: Key.dictationLanguage.rawValue) ?? "ru" }
+        set { defaults.set(newValue, forKey: Key.dictationLanguage.rawValue); objectWillChange.send() }
+    }
+
+    // MARK: - Словарь замен
+
+    var glossaryEnabled: Bool {
+        get { defaults.object(forKey: Key.glossaryEnabled.rawValue) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.glossaryEnabled.rawValue); objectWillChange.send() }
+    }
+
+    /// Пользовательские правила в виде `произнесённое = каноническое`.
+    /// Дополняют словарь по умолчанию, не заменяют его.
+    var glossaryRules: [String] {
+        get { defaults.stringArray(forKey: Key.glossaryRules.rawValue) ?? [] }
+        set { defaults.set(newValue, forKey: Key.glossaryRules.rawValue); objectWillChange.send() }
     }
 
     // MARK: - Properties
@@ -61,12 +88,15 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     var selectedModel: String {
         get {
-            let stored = defaults.string(forKey: Key.selectedModel.rawValue) ?? "small.en"
+            // Мультиязычная модель по умолчанию: английская не распознаёт
+            // русский вовсе, а основной сценарий — русская речь.
+            let fallback = "large-v3-turbo-q5_0"
+            let stored = defaults.string(forKey: Key.selectedModel.rawValue) ?? fallback
             // Fall back to the default if the stored id doesn't correspond to any
             // catalog model (see ModelInfo.settingsId). Guards against a stale id left
             // behind after the catalog changes.
             let isKnown = ModelManager.ModelInfo.all.contains { $0.settingsId == stored }
-            return isKnown ? stored : "small.en"
+            return isKnown ? stored : fallback
         }
         set { defaults.set(newValue, forKey: Key.selectedModel.rawValue); objectWillChange.send() }
     }
@@ -78,9 +108,16 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     var vocabularyPrompt: String {
         get {
-            defaults.string(forKey: Key.vocabularyPrompt.rawValue) ?? Self.defaultVocabularyPrompt
+            defaults.string(forKey: Key.vocabularyPrompt.rawValue) ?? defaultPromptForCurrentLanguage
         }
         set { defaults.set(newValue, forKey: Key.vocabularyPrompt.rawValue); objectWillChange.send() }
+    }
+
+    /// Промпт по умолчанию зависит от языка: английский словарь в русской
+    /// диктовке смещает декодер в сторону английского вывода — ровно то,
+    /// чего мы избегаем.
+    var defaultPromptForCurrentLanguage: String {
+        dictationLanguage == "en" ? Self.defaultVocabularyPromptEN : Self.defaultVocabularyPromptRU
     }
 
     var launchAtLogin: Bool {
@@ -158,8 +195,25 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     // MARK: - Default Vocabulary Prompt
 
-    // ~500 words — under whisper's 1024 token (~750 word) limit
-    static let defaultVocabularyPrompt = """
+    /// Промпт для русской диктовки с латинскими терминами.
+    ///
+    /// Он **намеренно короткий**. whisper.cpp принимает промпт в токенах
+    /// (порядка `n_text_ctx/2` ≈ 224), а не в словах, и на кириллице токенов
+    /// на символ заметно больше, чем на латинице. Длинный промпт молча
+    /// обрезается, а обрезок ещё и смещает декодер непредсказуемо.
+    ///
+    /// Смысл строки — не перечислить словарь, а **показать модели сам паттерн**:
+    /// русская фраза, внутри которой латиница остаётся латиницей.
+    static let defaultVocabularyPromptRU = """
+        Обсуждаем код. Сделай pull request и merge в master. \
+        Это Effector store, проверь useUnit и useState. \
+        Задеплой на staging, потом на production. \
+        Открой Figma и посмотри в Xcode. Запусти npm run build.
+        """
+
+    /// Прежний англоязычный промпт. Оставлен для режима `en`: там он уместен,
+    /// хотя тоже превышает бюджет и подлежит обрезке по токенам.
+    static let defaultVocabularyPromptEN = """
         Technical software engineering discussion. \
         Languages: JavaScript, TypeScript, Python, Swift, SwiftUI, Rust, Go, Golang, \
         Java, Kotlin, C++, C#, F#, Ruby, PHP, Dart, Scala, Haskell, Elixir, Clojure, \

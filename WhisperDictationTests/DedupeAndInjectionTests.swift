@@ -182,7 +182,7 @@ final class AppInfoTests: XCTestCase {
 /// casing of a shared brand term.
 final class TermDataDriftTests: XCTestCase {
     func testCanonicalTermCasingConsistentWithVocabularyPrompt() {
-        let prompt = AppSettings.defaultVocabularyPrompt
+        let prompt = AppSettings.defaultVocabularyPromptEN
         let lowerPrompt = prompt.lowercased()
         for term in TextCorrector.canonicalDisplayTerms {
             // Skip short/punctuated terms to avoid substring false positives in the

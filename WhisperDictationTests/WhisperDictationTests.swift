@@ -141,7 +141,8 @@ final class AppSettingsTests: XCTestCase {
     }
 
     func testDefaultVocabularyPrompt() {
-        XCTAssertTrue(AppSettings.defaultVocabularyPrompt.contains("Technical software engineering"))
+        XCTAssertTrue(AppSettings.defaultVocabularyPromptEN.contains("Technical software engineering"))
+        XCTAssertTrue(AppSettings.defaultVocabularyPromptRU.contains("pull request"))
     }
 
     func testCustomTermsDefaultEmpty() {
