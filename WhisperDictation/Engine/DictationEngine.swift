@@ -11,7 +11,14 @@ enum DictationState: String {
 
 @Observable
 final class DictationEngine {
-    private(set) var state: DictationState = .idle
+    private(set) var state: DictationState = .idle {
+        didSet { refreshOverlay() }
+    }
+
+    /// Уровень входного сигнала 0…1 для индикации. Обновляется часто, поэтому
+    /// в UI попадает только через оверлей, а не через перерисовку меню.
+    private(set) var audioLevel: Float = 0
+
     private(set) var lastTranscription: String = ""
     private(set) var isModelLoaded: Bool = false
     private(set) var modelLoadError: String?
@@ -36,6 +43,19 @@ final class DictationEngine {
 
     private var accessibilityPoller: Timer?
 
+    /// Порог обновления уровня: тап срабатывает несколько раз в секунду, и
+    /// перерисовывать капсулу на каждое микроизменение незачем.
+    private static let levelUpdateThreshold: Float = 0.04
+
+    private func refreshOverlay() {
+        let state = self.state
+        let level = self.audioLevel
+        let hasError = self.transcriptionError != nil
+        Task { @MainActor in
+            OverlayController.shared.update(state: state, level: level, hasError: hasError)
+        }
+    }
+
     /// Pending toggle-mode hold timer. Cancelled if the user releases the key
     /// before the threshold; cleared after firing.
     private var holdWorkItem: DispatchWorkItem?
@@ -43,6 +63,14 @@ final class DictationEngine {
     init() {
         let axTrusted = AXIsProcessTrusted()
         fputs("[DictationEngine] Init. Accessibility: \(axTrusted)\n", stderr)
+        audioCapture.onLevel = { [weak self] level in
+            guard let self else { return }
+            // Тап приходит с аудиопотока; отсекаем мелкие колебания до того,
+            // как отправлять что-либо на главный поток.
+            guard abs(level - self.audioLevel) > Self.levelUpdateThreshold else { return }
+            self.audioLevel = level
+            self.refreshOverlay()
+        }
         audioCapture.onConfigurationChange = { [weak self] in
             self?.handleInputConfigurationChange()
         }

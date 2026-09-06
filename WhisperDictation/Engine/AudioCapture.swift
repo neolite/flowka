@@ -20,7 +20,30 @@ final class AudioCapture {
     /// immediately (VADSegmenter.append does). Cleared by the engine when a
     /// live session ends.
     var onSamples: (([Float]) -> Void)?
+
+    /// Уровень сигнала 0…1 для индикации в оверлее. Вызывается с потока тапа,
+    /// получатель обязан немедленно уйти на главный поток.
+    var onLevel: ((Float) -> Void)?
+
     private var configObserver: NSObjectProtocol?
+
+    /// Уровень для визуализации, а не для измерений.
+    ///
+    /// Берём RMS и переводим в децибелы, потому что линейная амплитуда для
+    /// глаза бесполезна: обычная речь держится около 0.05–0.15 и полоска почти
+    /// не шевелится. Диапазон −50…0 дБ растянут на 0…1 — это и даёт заметное
+    /// движение при нормальной громкости.
+    static func perceptualLevel(of samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0 }
+        var sum: Float = 0
+        for sample in samples { sum += sample * sample }
+        let rms = (sum / Float(samples.count)).squareRoot()
+        guard rms > 0 else { return 0 }
+
+        let db = 20 * log10(rms)
+        let floorDb: Float = -50
+        return max(0, min(1, (db - floorDb) / -floorDb))
+    }
 
     private static let sampleRate: Double = 16000
 
@@ -143,6 +166,7 @@ final class AudioCapture {
                 let crossedCap = Self.crossesDurationCap(previousCount: previousCount, newCount: self.audioBuffer.count)
                 self.bufferLock.unlock()
                 self.onSamples?(samples)
+                self.onLevel?(Self.perceptualLevel(of: samples))
                 #if DEBUG
                 fputs("+", stderr) // successful conversion (DEBUG only)
                 #endif

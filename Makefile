@@ -41,6 +41,7 @@ SWIFT_FILES := \
 	WhisperDictation/Utilities/LaunchAtLoginHelper.swift \
 	WhisperDictation/Utilities/AudioDeviceManager.swift \
 	WhisperDictation/Engine/DictationEngine.swift \
+	WhisperDictation/UI/DictationOverlay.swift \
 	WhisperDictation/UI/MenuBarView.swift \
 	WhisperDictation/UI/SettingsView.swift \
 	WhisperDictation/UI/OnboardingView.swift \
