@@ -37,3 +37,6 @@ docs/superpowers/
 # Environment
 .env
 .env.local
+
+# временная копия выкачки сайта Wispr для анализа, в репозиторий не идёт
+docs/research/_wispr-site/

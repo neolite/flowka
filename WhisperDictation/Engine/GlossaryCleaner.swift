@@ -76,6 +76,16 @@ struct GlossaryCleaner: Sendable {
         cache.regex(for: spoken)
     }
 
+    /// Разделитель между словами фразы словаря: пробельное, дефис-минус,
+    /// неразрывный дефис, короткое и длинное тире.
+    ///
+    /// Символы подставлены буквально, а НЕ как `\\u{2011}`: ICU-движок
+    /// `NSRegularExpression` фигурные скобки в `\\u` не понимает, такая
+    /// регулярка не компилируется — а `regex(for:)` возвращает `nil` и правило
+    /// молча пропускается. Проверено: с `\\u{...}` не срабатывало ни одно
+    /// правило из нескольких слов.
+    private static let separatorPattern = "[\\s\\-\u{2011}\u{2013}\u{2014}]+"
+
     private final class RegexCache: @unchecked Sendable {
         private var storage: [String: NSRegularExpression] = [:]
         private let lock = NSLock()
@@ -87,12 +97,17 @@ struct GlossaryCleaner: Sendable {
             if let cached = storage[spoken] { return cached }
 
             // Границы слова обязательны: без них «пул» внутри «пульт» тоже
-            // заменится. Пробелы во фразе допускают повторы и перенос строки,
-            // потому что Whisper может вставить между словами что угодно из
-            // пробельного.
+            // заменится.
+            //
+            // Пробел во фразе словаря соответствует не только пробелу.
+            // Замерено на large-v3-turbo: без промпта модель выдаёт
+            // «пул-реквест» — ЧЕРЕЗ ДЕФИС. Правило, ищущее только пробел, такую
+            // строку не видит, а это ровно тот случай, ради которого словарь и
+            // нужен (промпт не сработал). Поэтому разделителем считается любой
+            // пробельный символ, дефис или тире — в любом количестве.
             let escaped = NSRegularExpression.escapedPattern(for: spoken)
-                .replacingOccurrences(of: "\\ ", with: "\\s+")
-                .replacingOccurrences(of: " ", with: "\\s+")
+                .replacingOccurrences(of: "\\ ", with: GlossaryCleaner.separatorPattern)
+                .replacingOccurrences(of: " ", with: GlossaryCleaner.separatorPattern)
             let pattern = "\\b\(escaped)\\b"
 
             guard let compiled = try? NSRegularExpression(
