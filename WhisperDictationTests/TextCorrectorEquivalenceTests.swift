@@ -63,10 +63,17 @@ final class TextCorrectorEquivalenceTests: XCTestCase {
     private func withHermeticSettings(_ body: () -> Void) {
         let s = AppSettings.shared
         let g = s.grammarCorrectionEnabled, n = s.numberConversionEnabled, c = s.customTerms
-        defer { s.grammarCorrectionEnabled = g; s.numberConversionEnabled = n; s.customTerms = c }
+        let language = s.dictationLanguage
+        defer {
+            s.grammarCorrectionEnabled = g
+            s.numberConversionEnabled = n
+            s.customTerms = c
+            s.dictationLanguage = language
+        }
         s.grammarCorrectionEnabled = true
         s.numberConversionEnabled = true
         s.customTerms = []
+        s.dictationLanguage = "en"
         body()
     }
 

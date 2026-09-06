@@ -222,26 +222,6 @@ final class WhisperBridge: @unchecked Sendable {
         cancelLock.unlock()
     }
 
-    /// Паразитные фразы, которые Whisper выдаёт на тишине и шуме. Они не
-    /// случайны: модель обучена в том числе на субтитрах YouTube, поэтому
-    /// «галлюцинирует» концовками роликов. Набор строго языковой — английский
-    /// фильтр на русской речи не ловит ничего.
-    static func hallucinationPattern(for language: String) -> String {
-        switch language {
-        case "ru":
-            return "(Продолжение следует|Субтитры сделал|Субтитры создавал|"
-                + "Редактор субтитров|Корректор|Спасибо за просмотр|"
-                + "Подписывайтесь на канал|Ставьте лайки|ПОДПИСЫВАЙТЕСЬ)"
-        case "en":
-            return "(Thank you|Thanks for watching|Please subscribe|you)"
-        default:
-            // Для `auto` объединяем оба набора: язык заранее неизвестен.
-            return "(Продолжение следует|Субтитры сделал|Субтитры создавал|"
-                + "Редактор субтитров|Спасибо за просмотр|Подписывайтесь на канал|"
-                + "Thank you|Thanks for watching|Please subscribe)"
-        }
-    }
-
     /// Synchronous inference body. MUST be called on `queue` — the whisper C context
     /// is only ever touched from that queue (thread-safety contract). Extracted from
     /// the former `queue.sync` closure so `transcribe` can bridge it to async.
@@ -269,14 +249,16 @@ final class WhisperBridge: @unchecked Sendable {
 
         // Allocate C strings (freed in defer)
         let langCStr = strdup(language)
-        let suppressCStr = strdup(Self.hallucinationPattern(for: language))
         let promptCStr = prompt.isEmpty ? nil : strdup(prompt)
         var vadPathCStr: UnsafeMutablePointer<CChar>?
 
         params.language = UnsafePointer(langCStr)
         params.translate = false
         params.suppress_nst = true
-        params.suppress_regex = UnsafePointer(suppressCStr)
+        // suppress_regex operates at the vocabulary/logits layer, while these
+        // suppressions are whole output phrases. Running the regex over the
+        // vocabulary on every decode pass is expensive and cannot implement the
+        // intended phrase filter; phrase filtering belongs after transcription.
         // true = each transcription is independent (prevents hallucination carry-over)
         params.no_context = true
 
@@ -327,7 +309,6 @@ final class WhisperBridge: @unchecked Sendable {
 
         defer {
             free(langCStr)
-            free(suppressCStr)
             if let p = promptCStr { free(p) }
             if let v = vadPathCStr { free(v) }
             callbackCtxPtr?.release()

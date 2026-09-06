@@ -64,12 +64,15 @@ final class DictationEngine {
         let axTrusted = AXIsProcessTrusted()
         fputs("[DictationEngine] Init. Accessibility: \(axTrusted)\n", stderr)
         audioCapture.onLevel = { [weak self] level in
-            guard let self else { return }
-            // Тап приходит с аудиопотока; отсекаем мелкие колебания до того,
-            // как отправлять что-либо на главный поток.
-            guard abs(level - self.audioLevel) > Self.levelUpdateThreshold else { return }
-            self.audioLevel = level
-            self.refreshOverlay()
+            // The tap callback is not main-actor isolated. Read and mutate the
+            // observable state only after hopping to the main actor; doing the
+            // threshold check on the tap thread races with UI state updates.
+            Task { @MainActor [weak self] in
+                guard let self,
+                      abs(level - self.audioLevel) > Self.levelUpdateThreshold else { return }
+                self.audioLevel = level
+                self.refreshOverlay()
+            }
         }
         audioCapture.onConfigurationChange = { [weak self] in
             self?.handleInputConfigurationChange()
@@ -124,13 +127,23 @@ final class DictationEngine {
 
     // MARK: - Model Loading
 
+    /// Identifies the latest requested model load. A slow warmup from an older
+    /// request must not replace a newer model or surface its error.
+    private var modelLoadGeneration = 0
+
     private func loadModelAsync() {
+        modelLoadGeneration &+= 1
+        let generation = modelLoadGeneration
+        // Resolve the selected path with this request. The detached work may
+        // start after another reload has changed settings, so it must not pair
+        // the new generation with a path read later.
+        let modelPath = ModelManager.shared.activeModelPath()
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                let modelPath = ModelManager.shared.activeModelPath()
                 guard let modelPath else {
                     await MainActor.run {
+                        guard self.modelLoadGeneration == generation else { return }
                         self.modelLoadError = "No model found. Open Settings to download a model."
                     }
                     return
@@ -142,12 +155,14 @@ final class DictationEngine {
                 await bridge.warmup()
 
                 await MainActor.run {
+                    guard self.modelLoadGeneration == generation else { return }
                     self.whisperBridge = bridge
                     self.isModelLoaded = true
                     self.modelLoadError = nil
                 }
             } catch {
                 await MainActor.run {
+                    guard self.modelLoadGeneration == generation else { return }
                     self.modelLoadError = "Failed to load model: \(error.localizedDescription)"
                 }
             }
@@ -424,6 +439,9 @@ final class DictationEngine {
         } catch {
             fputs("[DictationEngine] Failed to start recording: \(error)\n", stderr)
             teardownLiveSession()
+            // The consumer may still be draining the closed stream. It no
+            // longer owns the engine and must fail its session-identity guard.
+            liveSessionID = nil
             state = .idle
         }
     }
@@ -463,6 +481,7 @@ final class DictationEngine {
         )
         let injector = self.textInjector
         let feedback = self.soundFeedback
+        let useClipboard = AppSettings.shared.useClipboardInsertion
 
         Task.detached(priority: .userInitiated) { [weak self] in
             // Wait for all enqueued typing to drain, then surface the result and go idle.
@@ -501,8 +520,6 @@ final class DictationEngine {
             // В режиме буфера обмена текст доставляется одним куском после
             // распознавания: посегментная вставка через ⌘V означала бы
             // перезапись буфера на каждую фразу и заметные паузы.
-            let useClipboard = AppSettings.shared.useClipboardInsertion
-
             do {
                 _ = try await bridge.transcribe(
                     audioBuffer: audioBuffer,
@@ -560,6 +577,7 @@ final class DictationEngine {
     private var liveSegmenter: VADSegmenter?
     private var liveContinuation: AsyncStream<LiveWorkItem>.Continuation?
     private var liveSessionFlag: CancellationFlag?
+    private var liveSessionID: UUID?
 
     /// The session flag kept alive for the drain phase (stop → consumer finish),
     /// after the main-actor session references are cleared. This is what a cancel
@@ -578,11 +596,14 @@ final class DictationEngine {
         do {
             let segmenter = try VADSegmenter(vadModelPath: vadPath)
             let sessionFlag = CancellationFlag()
+            let sessionID = UUID()
+            let useClipboard = AppSettings.shared.useClipboardInsertion
             let (stream, continuation) = AsyncStream.makeStream(of: LiveWorkItem.self)
 
             liveSegmenter = segmenter
             liveContinuation = continuation
             liveSessionFlag = sessionFlag
+            liveSessionID = sessionID
 
             // Invoked synchronously on the segmenter's queue, so it must touch
             // NO main-actor state: the continuation is captured by value, never
@@ -594,7 +615,13 @@ final class DictationEngine {
             segmenter.onChunk = { chunk in continuation.yield(.chunk(chunk)) }
             audioCapture.onSamples = { samples in segmenter.append(samples) }
             segmenter.start()
-            runLiveConsumer(stream: stream, bridge: bridge, sessionFlag: sessionFlag)
+            runLiveConsumer(
+                stream: stream,
+                bridge: bridge,
+                sessionFlag: sessionFlag,
+                sessionID: sessionID,
+                useClipboard: useClipboard
+            )
             return true
         } catch {
             fputs("[DictationEngine] VAD init failed — falling back to non-live: \(error)\n", stderr)
@@ -611,7 +638,9 @@ final class DictationEngine {
     private func runLiveConsumer(
         stream: AsyncStream<LiveWorkItem>,
         bridge: WhisperBridge,
-        sessionFlag: CancellationFlag
+        sessionFlag: CancellationFlag,
+        sessionID: UUID,
+        useClipboard: Bool
     ) {
         let injector = self.textInjector
         let feedback = self.soundFeedback
@@ -650,7 +679,8 @@ final class DictationEngine {
                         )
                         let corrected = TextPipeline.shared.process(segment, context: context)
                         guard !corrected.isEmpty else { return }
-                        injector.type(text: collected.joinAndAppend(corrected))
+                        let delta = collected.joinAndAppend(corrected)
+                        if !useClipboard { injector.type(text: delta) }
                     }
                 } catch let error as WhisperError where error.isCancellation {
                     continue   // silent: user cancel, or cascade after a failure
@@ -661,24 +691,39 @@ final class DictationEngine {
                 }
             }
 
-            // Stream closed: stop-time finish (unconditional drain + flush).
-            if surfacedError == nil, Self.needsTerminalPeriod(committed: collected.text) {
-                injector.type(text: ".")
+            // Stream closed: stop-time finish. A clipboard session has no
+            // per-segment side effects, so deliver one complete transcript only
+            // after a successful, uncancelled drain, including its terminal period.
+            let cancelled = sessionFlag.isCancelled
+            if surfacedError == nil, !cancelled, Self.needsTerminalPeriod(committed: collected.text) {
+                if useClipboard {
+                    collected.appendTerminalPeriod()
+                } else {
+                    injector.type(text: ".")
+                }
+            }
+            if useClipboard, surfacedError == nil, !cancelled, !collected.text.isEmpty {
+                injector.paste(text: collected.text)
             }
             injector.flush()
 
             let finalError = surfacedError
             await MainActor.run { [weak self] in
                 guard let self else { return }
+                // A failed start or a newer recording may have already taken
+                // ownership of the engine. The old consumer must not reset it.
+                guard self.liveSessionID == sessionID,
+                      self.state == .processing || self.state == .typing else { return }
                 if let finalError {
                     self.transcriptionError = finalError
-                } else if !collected.text.isEmpty {
+                } else if !cancelled, !collected.text.isEmpty {
                     var transcript = collected.text
                     if Self.needsTerminalPeriod(committed: transcript) { transcript += "." }
                     self.lastTranscription = transcript
                     self.transcriptionError = nil
                 }
                 feedback.playDoneSound()
+                self.liveSessionID = nil
                 self.returnToIdle()
             }
         }
@@ -830,5 +875,12 @@ final class TranscriptCollector: @unchecked Sendable {
         let piece = text.isEmpty ? segment : " " + segment
         text += piece
         return piece
+    }
+
+    /// Adds the one stop-time terminator used by live dictation and returns the
+    /// resulting complete transcript for a single clipboard insertion.
+    func appendTerminalPeriod() {
+        guard !text.isEmpty, DictationEngine.needsTerminalPeriod(committed: text) else { return }
+        text += "."
     }
 }
