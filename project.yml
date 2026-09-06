@@ -11,6 +11,20 @@ settings:
     SWIFT_VERSION: "5"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
+# Parakeet TDT v3 ASR backend. SPM-only package (binary xcframework +
+# C-wrapper targets), поэтому app с v3 собирается через xcodebuild, а НЕ через
+# голый swiftc-Makefile. Голый `make app` остаётся whisper-only (FluidAudioEngine
+# под `#if canImport(FluidAudio)` компилируется там в пустоту). Пин на точную
+# ревизию склонированного пакета — ту, на которой замерялся спайк (5c19d5e).
+packages:
+  FluidAudio:
+    # ЛОКАЛЬНЫЙ чекаут пакета (ревизия 5c19d5e, ветка main — та, на которой
+    # замерялся спайк). Через git-URL xcodebuild фетчил пакет по вялому VPN и
+    # залипал; локальный path убирает сетевой фетч самого FluidAudio. Для
+    # РЕЛИЗА заменить на url+revision (см. отчёт). Транзитивный бинарный
+    # xcframework NemoTextProcessing всё равно тянется с github-releases.
+    path: /private/tmp/claude-501/-Users-rafkat/8d0d4f24-a5f0-47ca-9e5d-92feb02df3f7/scratchpad/FluidAudio
+
 targets:
   WhisperDictation:
     type: application
@@ -46,6 +60,8 @@ targets:
         Release:
           SWIFT_OPTIMIZATION_LEVEL: "-O"
     dependencies:
+      - package: FluidAudio
+        product: FluidAudio
       - sdk: Accelerate.framework
       - sdk: Metal.framework
       - sdk: MetalKit.framework

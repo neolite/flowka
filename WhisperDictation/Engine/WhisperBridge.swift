@@ -49,7 +49,7 @@ private func abortCallback(_ userData: UnsafeMutableRawPointer?) -> Bool {
     return Unmanaged<CancellationFlag>.fromOpaque(userData).takeUnretainedValue().isCancelled
 }
 
-final class WhisperBridge: @unchecked Sendable {
+final class WhisperBridge: TranscriptionEngine, @unchecked Sendable {
     private let context: OpaquePointer
     private let queue = DispatchQueue(label: "com.whisperdictation.whisper", qos: .userInitiated)
     private let vadModelPath: String?
@@ -207,6 +207,10 @@ final class WhisperBridge: @unchecked Sendable {
             whisper_free(self.context)
         }
     }
+
+    /// `TranscriptionEngine` conformance: whisper's shutdown is the Metal-context
+    /// free above.
+    func shutdown() { shutdownAndFree() }
 
     // Synchronous lock helpers. Kept out of the async `transcribe` body so the NSLock
     // is never taken across a suspension point (which the compiler forbids).

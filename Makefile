@@ -27,7 +27,9 @@ SWIFT_FILES := \
 	WhisperDictation/Utilities/Settings.swift \
 	WhisperDictation/Utilities/KeyCodeNames.swift \
 	WhisperDictation/Utilities/AppInfo.swift \
+	WhisperDictation/Engine/TranscriptionEngine.swift \
 	WhisperDictation/Engine/WhisperBridge.swift \
+	WhisperDictation/Engine/FluidAudioEngine.swift \
 	WhisperDictation/Engine/AudioCapture.swift \
 	WhisperDictation/Engine/TextInjector.swift \
 	WhisperDictation/Engine/SoundFeedback.swift \
