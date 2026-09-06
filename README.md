@@ -1,387 +1,119 @@
 <p align="center">
-  <h1 align="center">WhisperDictation</h1>
+  <h1 align="center">Flowka</h1>
   <p align="center">
-    <strong>Free, local, and private dictation for macOS.</strong><br>
-    Open-source speech-to-text that runs entirely on your Mac. No cloud, no subscriptions.<br>
-    Hold a key. Speak. Release. Your words appear at the cursor.
-  </p>
-  <p align="center">
-    <a href="https://sam-pop.github.io/WhisperDictation/">Website</a> &bull;
-    <a href="#install-dmg">Download</a> &bull;
-    <a href="#quick-start">Quick Start</a> &bull;
-    <a href="#features">Features</a> &bull;
-    <a href="#privacy--safety">Privacy</a> &bull;
-    <a href="#models">Models</a> &bull;
-    <a href="#contributing">Contributing</a>
-  </p>
-  <p align="center">
-    <img src="https://img.shields.io/badge/platform-macOS%2014%2B-blue" alt="macOS 14+">
-    <img src="https://img.shields.io/badge/price-free-brightgreen" alt="Free">
-    <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
-    <img src="https://img.shields.io/badge/powered%20by-whisper.cpp-orange" alt="whisper.cpp">
-    <img src="https://img.shields.io/badge/privacy-100%25%20local-purple" alt="100% Local">
+    <strong>Локальная голосовая диктовка для macOS — русская речь с английскими терминами.</strong><br>
+    Зажми клавишу, говори, отпусти. Текст появляется в активном поле ввода.<br>
+    Всё распознавание — на твоём Mac. Без облака, без ключей, без подписок.
   </p>
 </p>
 
 ---
 
-**Free. Local. Private. No cloud. No API keys. No subscriptions. No data leaves your Mac.**
+**Free. Local. Private.** Ничего не уходит с компьютера.
 
-WhisperDictation is a **free, open-source macOS dictation app** -- a local alternative to [Willow Voice](https://www.heywillow.io/), [WisprFlow](https://wisprflow.com/), and Apple Dictation. It runs OpenAI's [Whisper](https://github.com/openai/whisper) speech recognition model entirely on your machine using [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with Metal GPU acceleration. Your voice never leaves your computer.
+Flowka — это инструмент голосового ввода, заточенный под то, как реально
+говорят разработчики: русская речь с вкраплениями английских технических
+терминов. «Сделай **pull request** и **merge** в **master**», «это **Effector
+store**, проверь **useUnit**», «задеплой на **staging**, потом посмотри в
+**Figma**». Обычные распознавалки такое ломают: либо транслитерируют латиницу в
+кириллицу («пул реквест»), либо переводят на слух. Flowka сохраняет термины в
+исходном виде.
 
-**Why WhisperDictation?**
-- Apple's built-in dictation sends audio to Apple servers and has limited accuracy for technical terms
-- Commercial tools like Willow Voice and WisprFlow cost $8-15/month
-- WhisperDictation is **completely free**, runs **100% offline**, and is **optimized for developers** with 500+ technical terms built in
+Это форк [sam-pop/WhisperDictation](https://github.com/sam-pop/WhisperDictation)
+(MIT). База — [whisper.cpp](https://github.com/ggerganov/whisper.cpp) с Metal на
+Apple Silicon. Своё в Flowka — две вещи, которые и решают задачу code-switching:
 
-## Features
+1. **Mixed-script `initial_prompt`** — промпт-затравка из русского текста с
+   вкраплением латинских терминов смещает декодер Whisper так, что английские
+   слова в русской речи остаются латиницей. Проверено: эффект **обобщается** за
+   пределы слов из промпта (модель восстановила `research`, которого в промпте
+   не было).
+2. **Детерминированный глоссарий** (`GlossaryCleaner`) — пост-обработка без LLM:
+   однозначные транслитерации приводятся к каноничному виду по словарю, с
+   контролем границ слов, чтобы «пульт» не превратился в «пульт-реквест».
 
-- **Push-to-talk OR toggle mode** -- hold a hotkey and release, OR press once to start and once to stop. Toggle mode is **carpal-tunnel friendly** for long dictations and anyone with RSI; it requires a configurable hold (default 1.5s) to prevent accidental activation.
-- **Live dictation (optional)** -- commit-on-pause streaming: each phrase is typed about half a second after you pause, while you keep speaking. Already-typed text is never revised -- no backspacing into terminals or send-on-enter chat boxes. Off by default; requires the Silero VAD model (2 MB).
-- **Works in any app** -- Terminal, VS Code, Claude Code, Xcode, Slack, browsers, email -- anywhere you can type
-- **Fast** -- sub-second transcription on Apple Silicon (Metal GPU). Optimized CPU path for Intel Macs.
-- **100% private** -- all audio processing happens locally. Nothing is sent to any server, ever.
-- **Developer-optimized** -- built-in vocabulary of 500+ technical terms biases Whisper toward correct recognition of API, JSON, Kubernetes, PostgreSQL, GraphQL, etc.
-- **Smart grammar correction** -- auto-capitalizes sentences, fixes 100+ acronym/term casings (api->API, javascript->JavaScript), adds punctuation
-- **Number word conversion** -- "two four six eight" becomes "2,468", "three hundred forty two" becomes "342"
-- **Multiple Whisper models** -- Base (142 MB, fastest), Small (466 MB, balanced), Medium (1.5 GB, most accurate)
-- **Configurable hotkey** -- right Option by default, rebind to any key
-- **Sound feedback** -- subtle audio cues for recording start, stop, and completion
-- **Polished native UI** -- SwiftUI menu bar app with sidebar settings, dark/light mode support
-- **Open source** -- MIT licensed, no telemetry, no analytics
+LLM-очистки в v1 нет намеренно: детерминированная замена предсказуема,
+мгновенна и не выдумывает текст.
 
-## Privacy & Safety
+## Как это работает
 
-WhisperDictation runs **100% locally**. Your audio never leaves your Mac. There is no server, no account, no telemetry, no tracking of any kind.
-
-**Don't trust us — verify it yourself.** The entire app is ~2,500 lines of Swift. You can audit every network call in one command:
-
-```bash
-grep -rE "URLSession|http" WhisperDictation/**/*.swift
-# Only match: ModelManager.swift (fetches Whisper models from HuggingFace when you click Download)
+```
+глобальный хоткей (⌥ Right Option)
+   → запись с микрофона
+   → whisper.cpp + mixed-script initial_prompt   (распознавание)
+   → GlossaryCleaner                              (детерминированная нормализация)
+   → вставка в активное поле ввода любого приложения
 ```
 
-### What we don't do
+Push-to-talk: держишь клавишу, говоришь, отпускаешь. По умолчанию — правый
+Option. Есть и toggle-режим (нажал/нажал).
 
-- ❌ Send audio or transcriptions anywhere
-- ❌ Track, analyze, or log anything
-- ❌ Phone home, auto-update, or license-check
-- ❌ Read your clipboard
-- ❌ Load web fonts or external scripts
-- ❌ Require an account or an internet connection
+## Модель по умолчанию
 
-See the full [Privacy breakdown](https://sam-pop.github.io/WhisperDictation/privacy.html) and [SECURITY.md](SECURITY.md) for the threat model and disclosure policy.
+`ggml-large-v3-turbo-q5_0` (turbo-q5). Выбрана по замерам на нашем сценарии:
+относительно `large-v3-q5` ошибки не столько уменьшаются, сколько меняются
+местами, а turbo — вдвое быстрее и меньше (≈1.5 с против ≈2.9 с полного прохода
+на тех же аудио). Внешнее утверждение, что turbo сильнее транслитерирует, на
+наших примерах **не воспроизвелось**.
 
-## Install (DMG)
+Опционально — Silero VAD (2 МБ) для live-режима (потоковая вставка по паузам).
 
-Download the latest `.dmg` from [Releases](https://github.com/sam-pop/WhisperDictation/releases), open it, and drag WhisperDictation to Applications.
+## Что проверено, а что нет
 
-> **Note: The app is not notarized by Apple.** macOS will block it on first launch. To open it on Mac:
-> 1. Open WhisperDictation -- macOS will show a warning that it can't verify the developer
-> 2. Go to **System Settings > Privacy & Security**
-> 3. Scroll down and click **Open Anyway** next to the WhisperDictation message
-> 4. Click **Open** in the confirmation dialog
->
-> You only need to do this once. After that, the app opens normally.
+Честно, потому что это личный рабочий инструмент, а не витрина.
 
-Or build from source:
+**Проверено на Mac (не со слов):**
 
-```bash
-# Create a DMG after building
-./scripts/create-dmg.sh
-# Output: build/WhisperDictation.dmg
-```
+- сборка `make app` — universal binary, без ошибок;
+- подпись стабильная: `com.rafkat.flowka`, Apple Development, hardened runtime;
+- `GlossaryCleaner` — все правила компилируются и срабатывают, границы слов на
+  кириллице держатся (есть тесты);
+- гипотеза code-switching: mixed-script промпт сохраняет латинские термины и
+  обобщается за пределы словаря промпта; операционная задержка ≈1 с на
+  Apple Silicon.
 
-## Quick Start
+**Проверено на синтетических аудио, не на живом голосе в UI.** Качество
+распознавания живой речи, поведение вставки во всех приложениях и стабильность
+разрешений TCC на конкретной машине подтверждаются только личным
+использованием.
 
-### Prerequisites
+## Требования и сборка
 
-```bash
-xcode-select --install    # Xcode Command Line Tools
-brew install cmake         # CMake (for building whisper.cpp)
-```
-
-### Build from Source
+- Apple Silicon, macOS 14+.
+- Xcode Command Line Tools, CMake.
 
 ```bash
-git clone --recurse-submodules https://github.com/sam-pop/WhisperDictation.git
-cd WhisperDictation
-
-# 1. Build whisper.cpp static library (~1 min)
+# 1. Собрать whisper.cpp с Metal
 ./scripts/build-whisper.sh
 
-# 2. Download a Whisper model
-./scripts/download-model.sh small.en    # 466 MB -- recommended
-# or: ./scripts/download-model.sh base.en   # 142 MB -- faster, good for Intel Macs
+# 2. Скачать модель (или положить turbo-q5 вручную в
+#    ~/Library/Application Support/WhisperDictation/Models/)
+./scripts/download-model.sh
 
-# 3. Build and launch
+# 3. Собрать и запустить
 make run
 ```
 
-### First Launch
+> Приложение не нотаризовано Apple. При первом запуске macOS его заблокирует:
+> System Settings → Privacy & Security → **Open Anyway**. Один раз.
+>
+> Разрешения: **Микрофон** (запись) и **Универсальный доступ / Accessibility**
+> (вставка текста и глобальный хоткей). На свежей установке выдай оба в
+> System Settings → Privacy & Security. Если после клика «Grant Access»
+> системный запрос не появляется, статус уже `.denied` — включи Flowka
+> вручную в списке Микрофона.
 
-1. **Microphone** -- macOS will prompt automatically. Click Allow.
-2. **Accessibility** -- required for the global hotkey and text injection. The app will guide you to System Settings > Privacy & Security > Accessibility. Add WhisperDictation and toggle it on.
+## Приватность
 
-Once both permissions are granted, you'll see a green "Ready" status in the menu bar dropdown.
-
-## Usage
-
-| Step | Action |
-|------|--------|
-| 1 | Look for the waveform icon in your menu bar |
-| 2 | **Hold Right Option** (or your configured hotkey) |
-| 3 | Speak naturally |
-| 4 | **Release the key** -- text appears at your cursor |
-
-### Live Dictation
-
-Prefer to see words while you're still talking? Turn on **Settings > General > Live dictation**. Each phrase is typed about half a second after you pause -- no waiting for release. Already-typed text is never revised, so it's safe in terminals and send-on-enter chat boxes. Requires the Silero VAD model (2 MB); flipping the toggle downloads it automatically.
-
-### Menu Bar States
-
-| Icon | State | Meaning |
-|------|-------|---------|
-| Waveform | Idle | Ready to dictate |
-| Red mic | Recording | Listening to your voice |
-| Brain | Processing | Whisper is transcribing |
-| Cursor | Typing | Text is being injected |
-
-### Settings
-
-Click the menu bar icon > Settings to configure:
-
-- **General** -- hotkey binding, live dictation, grammar correction toggle, sound feedback, launch at login
-- **Model** -- download and switch between Whisper models
-- **Vocabulary** -- customize the developer vocabulary prompt for better recognition
-- **Permissions** -- check and manage macOS permissions
-
-## Models
-
-### Recommended: Quantized Models (Q5)
-
-Quantized models are 2-3x smaller and faster than full precision with near-identical accuracy. **Use these.**
-
-| Model | File | Size | Speed* | Accuracy | Recommended for |
-|-------|------|------|--------|----------|-----------------|
-| Base Q5 | `ggml-base.en-q5_1.bin` | 57 MB | ~0.2s | Good | Quick notes, Intel Macs |
-| **Small Q5** | **`ggml-small.en-q5_1.bin`** | **181 MB** | **~0.4s** | **Better** | **Daily coding use (default)** |
-| Medium Q5 | `ggml-medium.en-q5_0.bin` | 515 MB | ~1.0s | Best | Maximum accuracy |
-
-### Full Precision Models
-
-| Model | File | Size | Speed* | Accuracy |
-|-------|------|------|--------|----------|
-| Base | `ggml-base.en.bin` | 142 MB | ~0.3s | Good |
-| Small | `ggml-small.en.bin` | 466 MB | ~0.7s | Better |
-| Medium | `ggml-medium.en.bin` | 1.5 GB | ~1.5s | Best |
-
-### Voice Activity Detection (VAD)
-
-Download the Silero VAD model (2 MB) to automatically trim silence from recordings before inference. This significantly speeds up transcription, especially for short push-to-talk clips with silence at the start/end.
-
-The VAD model also powers **Live dictation** -- the toggle stays off until this model is on disk (enabling it in Settings starts the download automatically).
-
-*Speed measured for a 5-second audio clip on Apple Silicon with Metal GPU. Intel Macs use CPU-only and will be 2-3x slower.
-
-Download models via the script or the Settings > Model tab:
-```bash
-./scripts/download-model.sh small.en-q5_1    # Recommended
-./scripts/download-model.sh base.en-q5_1     # Fastest
-./scripts/download-model.sh medium.en-q5_0   # Most accurate
-```
-
-Or download directly from the Settings > Model tab in the app.
-
-## Grammar Correction
-
-WhisperDictation automatically cleans up Whisper's raw output with a local, rule-based corrector (<5ms overhead):
-
-**Capitalization**
-- First letter of every sentence
-- Standalone "I", "I'm", "I'll", "I've"
-
-**500+ Developer Term Corrections**
-| Whisper says | WhisperDictation outputs |
-|-------------|------------------------|
-| "create a rest api" | "Create a REST API." |
-| "set up the ci cd pipeline" | "Set up the CI/CD pipeline." |
-| "deploy to aws using docker" | "Deploy to AWS using Docker." |
-| "the javascript sdk uses graphql" | "The JavaScript SDK uses GraphQL." |
-| "configure postgresql and redis" | "Configure PostgreSQL and Redis." |
-
-**Punctuation**
-- Adds missing periods at end of sentences
-- Removes accidental spaces before punctuation
-- Normalizes whitespace
-
-Toggle on/off in Settings > General > "Auto-correct grammar & formatting".
-
-## How It Works
-
-```
-You hold a key and speak
-         |
-    [AVAudioEngine]         Captures mic audio at native sample rate
-         |
-    [AVAudioConverter]      Resamples to 16kHz mono Float32
-         |
-    [Silero VAD]            Trims silence from start/end (if VAD model downloaded)
-         |
-    [whisper.cpp]           Runs Whisper inference (Metal GPU or CPU)
-         |                  Beam search (Apple Silicon) / Greedy (Intel)
-         |                  Temperature fallback for low-confidence results
-         |                  Hallucination suppression via regex
-    [TextCorrector]         Fixes capitalization, acronyms, punctuation
-         |
-    [CGEvent]               Types text at cursor position in any app
-         |
-You see the text appear
-```
-
-### Architecture
-
-```
-HotkeyMonitor (CGEvent tap -- global push-to-talk key detection)
-       |
-DictationEngine (@Observable state machine)
-  |-- AudioCapture      AVAudioEngine -> 16kHz mono Float32 buffer
-  |-- VADSegmenter      Silero VAD commit-on-pause chunking (live dictation)
-  |-- WhisperBridge     C bridging header -> whisper_full() with beam search
-  |-- TextCorrector     Rule-based grammar, casing, punctuation (<5ms)
-  |-- TextInjector      CGEvent keyboardSetUnicodeString (works in any app)
-  |-- SoundFeedback     NSSound system audio cues
-```
-
-whisper.cpp is compiled as a **static library** with Metal GPU acceleration (`GGML_METAL=ON`, `GGML_METAL_EMBED_LIBRARY=ON`) and linked via a C bridging header. No dynamic libraries, no runtime dependencies.
-
-## Build Commands
+Flowka работает **100% локально**. Аудио и текст никуда не отправляются: нет
+сервера, аккаунта, телеметрии. Единственный сетевой вызов — загрузка модели
+Whisper с HuggingFace по кнопке Download. Проверить самому:
 
 ```bash
-make whisper    # Build whisper.cpp static library with Metal
-make model      # Download default model (small.en, 466 MB)
-make app        # Compile Swift sources and create .app bundle
-make run        # Build + launch the app
-make clean      # Remove build artifacts
+rg -E "URLSession|http" WhisperDictation/**/*.swift
 ```
 
-### Create a DMG
+## Лицензия
 
-```bash
-./scripts/create-dmg.sh
-# -> build/WhisperDictation.dmg
-```
-
-### Xcode Development
-
-```bash
-brew install xcodegen
-xcodegen generate        # Generate .xcodeproj from project.yml
-open WhisperDictation.xcodeproj
-```
-
-## Project Structure
-
-```
-WhisperDictation/
-  App/                        SwiftUI @main entry point, MenuBarExtra
-  Engine/
-    AudioCapture.swift         AVAudioEngine mic recording + resampling
-    WhisperBridge.swift        Swift wrapper for whisper.cpp C API
-    VADSegmenter.swift         Silero VAD chunking for live dictation
-    TextCorrector.swift        Rule-based grammar/casing/punctuation
-    TextInjector.swift         CGEvent text typing at cursor
-    DictationEngine.swift      State machine orchestrating everything
-    ModelManager.swift         Model download + selection
-    SoundFeedback.swift        Audio cue playback
-  UI/
-    MenuBarView.swift          Menu bar dropdown with status + controls
-    SettingsView.swift         Sidebar settings with cards UI
-    OnboardingView.swift       First-launch permission guide
-  Utilities/
-    HotkeyMonitor.swift        Global hotkey via CGEvent tap
-    PermissionManager.swift    Mic + Accessibility permission checks
-    Settings.swift             UserDefaults persistence
-    LaunchAtLoginHelper.swift  SMAppService integration
-whisper.cpp/                   Git submodule (ggerganov/whisper.cpp)
-scripts/
-  build-whisper.sh             Build static lib with Metal
-  download-model.sh            Download models from Hugging Face
-  create-dmg.sh                Package .app into .dmg installer
-.github/workflows/
-  ci.yml                       Build + test on push/PR
-  release.yml                  DMG + GitHub Release on git tag
-```
-
-## CI/CD
-
-| Workflow | Trigger | What it does |
-|----------|---------|-------------|
-| `ci.yml` | Push to `main`, PRs | Builds whisper.cpp, compiles app, uploads artifact |
-| `release.yml` | Git tag `v*` | Builds app, creates DMG, publishes GitHub Release |
-
-### Creating a Release
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-# GitHub Actions builds the DMG and creates a Release automatically
-```
-
-## Contributing
-
-Contributions are welcome! Here's how to get started:
-
-1. Fork the repo
-2. Create a feature branch (`git checkout -b feature/my-feature`)
-3. Build and test (`make whisper && make app && make run`)
-4. Commit your changes
-5. Open a Pull Request
-
-### Ideas for Contributions
-
-- Additional language support (currently English-only)
-- Custom sound packs for audio feedback
-- Clipboard mode (copy to clipboard instead of typing)
-- Per-app vocabulary profiles
-- Post-processing via local LLM for full grammar correction
-- Apple Silicon optimizations and benchmarking
-- Homebrew Cask formula
-
-## Troubleshooting
-
-**"Failed to create event tap"** -- Accessibility permission is not granted. Go to System Settings > Privacy & Security > Accessibility and add WhisperDictation.
-
-**No audio captured / empty transcription** -- Microphone permission is not granted, or the wrong input device is selected.
-
-**Slow transcription on Intel Mac** -- Intel Macs use CPU-only inference (Metal GPU is disabled). Switch to the `base.en` model in Settings > Model for faster results.
-
-**App crashes on launch** -- Make sure you built whisper.cpp first: `./scripts/build-whisper.sh`. If the model isn't downloaded, the app will show "No model found" in the menu bar.
-
-**Text not appearing at cursor** -- Some sandboxed apps block CGEvent text injection. Try in a different app (Terminal, TextEdit) to verify it works.
-
-## License
-
-[MIT License](LICENSE)
-
-## Third-Party Licenses
-
-| Dependency | License | Usage |
-|-----------|---------|-------|
-| [whisper.cpp](https://github.com/ggerganov/whisper.cpp) | MIT | Speech recognition inference engine |
-| [Whisper models](https://github.com/openai/whisper) (OpenAI) | MIT | Pre-trained speech recognition models |
-
-All macOS frameworks used (AVFoundation, Metal, CoreGraphics, AppKit, etc.) are provided by Apple as part of the macOS SDK under the [Xcode license agreement](https://developer.apple.com/terms/).
-
-## Acknowledgments
-
-- [whisper.cpp](https://github.com/ggerganov/whisper.cpp) by Georgi Gerganov -- the C/C++ port of Whisper that makes local real-time inference possible
-- [Whisper](https://github.com/openai/whisper) by OpenAI -- the speech recognition model that powers everything
-- Inspired by [Willow Voice](https://www.heywillow.io/) and [WisprFlow](https://wisprflow.com/)
-
----
-
-<p align="center">
-  Built with whisper.cpp + SwiftUI + Metal<br>
-  <sub>Made by <a href="https://github.com/sam-pop">sam-pop</a></sub>
-</p>
+MIT. Форк [sam-pop/WhisperDictation](https://github.com/sam-pop/WhisperDictation),
+на движке [whisper.cpp](https://github.com/ggerganov/whisper.cpp).

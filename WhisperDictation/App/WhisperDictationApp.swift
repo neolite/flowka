@@ -15,13 +15,13 @@ struct WhisperDictationApp: App {
         }
         .menuBarExtraStyle(.window)
 
-        Window("WhisperDictation Settings", id: "settings") {
+        Window("Flowka Settings", id: "settings") {
             SettingsView(engine: engine)
         }
         .windowResizability(.contentSize)
         .defaultPosition(.center)
 
-        Window("Welcome to WhisperDictation", id: "onboarding") {
+        Window("Welcome to Flowka", id: "onboarding") {
             OnboardingView(engine: engine)
         }
         .windowResizability(.contentSize)
