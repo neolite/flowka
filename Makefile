@@ -123,7 +123,15 @@ app: $(BUILD_DIR)/WhisperDictation
 run: app
 	open "$(APP_BUNDLE)"
 
-dmg: app
+# Релизная сборка: universal и со всеми движками. Отдельная цель, потому что
+# `app` — это быстрый whisper-only путь через swiftc, куда Parakeet не попадает
+# (SPM там недоступен). Подробности — в самом скрипте.
+release:
+	./scripts/build-release.sh
+
+# Зависит от `release`, а не от `app`: иначе в DMG уезжало бы приложение без
+# движка, включённого по умолчанию.
+dmg: release
 	./scripts/create-dmg.sh
 
 clean:

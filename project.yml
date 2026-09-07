@@ -41,7 +41,12 @@ targets:
           - "Info.plist"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.sampop.WhisperDictation
+        # Тот же идентификатор, что ставит Makefile (BUNDLE_ID). Расхождение
+        # стоило бы дорого: TCC привязывает выданные Accessibility/Microphone к
+        # bundle id, а UserDefaults по нему же ключуются. Сборка через
+        # xcodebuild с другим id выглядела бы для пользователя как сброс всех
+        # настроек и потеря разрешений. Меняя здесь — менять и в Makefile.
+        PRODUCT_BUNDLE_IDENTIFIER: com.rafkat.flowka
         INFOPLIST_FILE: WhisperDictation/Info.plist
         CODE_SIGN_ENTITLEMENTS: WhisperDictation/WhisperDictation.entitlements
         SWIFT_OBJC_BRIDGING_HEADER: WhisperDictation/WhisperDictation-Bridging-Header.h

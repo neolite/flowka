@@ -19,8 +19,14 @@ jobs:
       - name: Build whisper.cpp
         run: ./scripts/build-whisper.sh
 
-      - name: Build app
-        run: make app
+      - name: Install XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      # НЕ `make app`: тот путь идёт через голый swiftc, где нет SPM, и
+      # FluidAudioEngine компилируется в пустоту под `#if canImport(FluidAudio)`.
+      # Собранный так DMG приезжал бы без Parakeet v3 — движка по умолчанию.
+      - name: Build app (universal, все движки)
+        run: ./scripts/build-release.sh
 
       - name: Create DMG
         run: |
@@ -31,10 +37,10 @@ jobs:
         id: checksum
         run: |
           cd build
-          shasum -a 256 WhisperDictation.dmg > WhisperDictation.dmg.sha256
-          SHA=$(shasum -a 256 WhisperDictation.dmg | awk '{print $1}')
+          shasum -a 256 Flowka.dmg > Flowka.dmg.sha256
+          SHA=$(shasum -a 256 Flowka.dmg | awk '{print $1}')
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
-          cat WhisperDictation.dmg.sha256
+          cat Flowka.dmg.sha256
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
@@ -42,14 +48,17 @@ jobs:
           SHA256: ${{ steps.checksum.outputs.sha }}
         with:
           files: |
-            build/WhisperDictation.dmg
-            build/WhisperDictation.dmg.sha256
+            build/Flowka.dmg
+            build/Flowka.dmg.sha256
           generate_release_notes: true
           append_body: true
           body: |
 
             ### Verify download integrity
             ```
-            shasum -a 256 WhisperDictation.dmg
+            shasum -a 256 Flowka.dmg
             ```
-            Expected SHA256: see `WhisperDictation.dmg.sha256` attached to this release.
+            Expected SHA256: see `Flowka.dmg.sha256` attached to this release.
+
+            Сборка подписана ad-hoc, без нотаризации: при первом запуске
+            Gatekeeper покажет предупреждение — правый клик по приложению → Open.
