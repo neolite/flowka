@@ -190,8 +190,8 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     }
 
     /// Live dictation (commit-on-pause): type each phrase when the speaker
-    /// pauses instead of everything at stop. Default false. Stores intent —
-    /// the engine additionally requires the VAD model on disk per session.
+    /// pauses instead of everything at stop. Default true (see below). Stores
+    /// intent — the engine additionally requires the VAD model on disk per session.
     var liveDictationEnabled: Bool {
         // Дефолт ВКЛ: с Parakeet v3 живой режим набегает по фразам. Гейт
         // безопасный — нет VAD-модели или движок без потоковой обвязки → тихий
