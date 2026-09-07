@@ -487,6 +487,31 @@ private struct ModelSection: View {
 
     var body: some View {
         VStack(spacing: 14) {
+            // ASR engine toggle: whisper (default) vs Parakeet TDT v3.
+            CardHeader("Speech Engine", subtitle: "Parakeet v3 точнее на русском; whisper лучше на акронимах")
+            SettingsCard(colorScheme: colorScheme) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Picker("Engine", selection: Binding(
+                        get: { settings.asrEngine },
+                        set: { newValue in
+                            guard newValue != settings.asrEngine else { return }
+                            settings.asrEngine = newValue
+                            engine.reloadModel()   // пересоздаёт движок под новый выбор
+                        }
+                    )) {
+                        Text("Whisper").tag(AppSettings.ASREngine.whisper)
+                        Text("Parakeet v3").tag(AppSettings.ASREngine.parakeetV3)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if settings.asrEngine == .parakeetV3 {
+                        Text("Модель ~470 МБ качается с HuggingFace при первом включении (нужна сеть). Стилевой промпт не используется; словарь применяется через CTC-boost.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             // Recommended quantized models
             CardHeader("Recommended (Quantized)", subtitle: "Smaller, faster, near-identical accuracy")
 

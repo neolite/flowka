@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import Cocoa
 
 enum DictationState: String {
     case idle
@@ -32,7 +31,10 @@ final class DictationEngine {
     /// Drives the menu bar hold indicator.
     private(set) var isHoldingForToggle: Bool = false
 
-    private var whisperBridge: WhisperBridge?
+    /// Активный движок распознавания. whisper или Parakeet v3 — выбор по
+    /// `AppSettings.asrEngine`. Тип абстрактный (`TranscriptionEngine`), так что
+    /// весь остальной код движок-агностичен.
+    private var engine: (any TranscriptionEngine)?
     private let audioCapture = AudioCapture()
     private let textInjector = TextInjector()
     private let soundFeedback = SoundFeedback()
@@ -60,8 +62,14 @@ final class DictationEngine {
     /// before the threshold; cleared after firing.
     private var holdWorkItem: DispatchWorkItem?
 
-    init() {
-        let axTrusted = AXIsProcessTrusted()
+    /// Источник факта «AX-доступ выдан». Инъекция, а не прямой вызов
+    /// `AXIsProcessTrusted()`: так поллер доступа проверяется тестом, а не
+    /// только вручную через System Settings.
+    private let isAccessibilityTrusted: () -> Bool
+
+    init(isAccessibilityTrusted: @escaping () -> Bool = PermissionManager.isProcessTrusted) {
+        self.isAccessibilityTrusted = isAccessibilityTrusted
+        let axTrusted = isAccessibilityTrusted()
         fputs("[DictationEngine] Init. Accessibility: \(axTrusted)\n", stderr)
         audioCapture.onLevel = { [weak self] level in
             // The tap callback is not main-actor isolated. Read and mutate the
@@ -85,19 +93,9 @@ final class DictationEngine {
         loadModelAsync()
         LaunchAtLoginHelper.reconcile()
 
-        // Free whisper's Metal-backed contexts before exit(): NSApplication's
-        // terminate path never runs Swift deinits, and ggml aborts at exit
-        // (GGML_ASSERT in ggml_metal_rsets_free) if Metal resources are still
-        // alive when its static device registry is destroyed. Posted on the
-        // main thread; the engine lives for the whole process, so the observer
-        // is never removed.
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.prepareForTermination()
-        }
+        // Подписка на завершение приложения переехала в App-слой
+        // (`WhisperDictationApp.init`) — почему именно туда и почему её нельзя
+        // просто убрать, описано там же, рядом с регистрацией.
 
         if !axTrusted {
             startAccessibilityPoller()
@@ -106,12 +104,21 @@ final class DictationEngine {
 
     private func startAccessibilityPoller() {
         accessibilityPoller?.invalidate()
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
-            if AXIsProcessTrusted() {
+        // Решение «доступ появился» вынесено в `AccessibilityPoller` и покрыто
+        // тестом; здесь остаётся только механика — как часто спрашивать и когда
+        // погасить таймер.
+        let poller = AccessibilityPoller(
+            isTrusted: isAccessibilityTrusted,
+            onGranted: { [weak self] in
                 fputs("[DictationEngine] Accessibility granted! Restarting hotkey monitor.\n", stderr)
+                self?.restartHotkeyMonitor()
+            }
+        )
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
+            poller.tick()
+            if poller.isFinished {
                 timer.invalidate()
                 self?.accessibilityPoller = nil
-                self?.restartHotkeyMonitor()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -134,29 +141,49 @@ final class DictationEngine {
     private func loadModelAsync() {
         modelLoadGeneration &+= 1
         let generation = modelLoadGeneration
-        // Resolve the selected path with this request. The detached work may
-        // start after another reload has changed settings, so it must not pair
-        // the new generation with a path read later.
+        // Selected engine + inputs resolved with THIS request. The detached work
+        // may start after another reload changed settings, so it must not pair
+        // the new generation with values read later.
+        let selectedEngine = AppSettings.shared.asrEngine
         let modelPath = ModelManager.shared.activeModelPath()
+        let vocabTerms = AppSettings.shared.parakeetVocabularyTerms
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             do {
-                guard let modelPath else {
+                let loaded: any TranscriptionEngine
+                switch selectedEngine {
+                case .parakeetV3:
+                    #if canImport(FluidAudio)
+                    // Модель v3 качается с HF при первом запуске (нужна сеть) и
+                    // грузится ОДИН раз здесь. UI не блокируется: isModelLoaded
+                    // взводится только после готовности.
+                    loaded = try await FluidAudioEngine.make(vocabTerms: vocabTerms)
+                    #else
+                    // Сборка без FluidAudio (голый swiftc make app): v3 недоступен.
                     await MainActor.run {
                         guard self.modelLoadGeneration == generation else { return }
-                        self.modelLoadError = "No model found. Open Settings to download a model."
+                        self.modelLoadError = "Parakeet v3 недоступен в этой сборке (собрана без FluidAudio). Переключитесь на whisper."
                     }
                     return
+                    #endif
+                case .whisper:
+                    guard let modelPath else {
+                        await MainActor.run {
+                            guard self.modelLoadGeneration == generation else { return }
+                            self.modelLoadError = "No model found. Open Settings to download a model."
+                        }
+                        return
+                    }
+                    let bridge = try WhisperBridge(modelPath: modelPath)
+                    // Pre-warm GPU: JIT-compile Metal shaders with a tiny dummy inference.
+                    // Async so this cooperative-pool task isn't blocked during warmup.
+                    await bridge.warmup()
+                    loaded = bridge
                 }
-                let bridge = try WhisperBridge(modelPath: modelPath)
-
-                // Pre-warm GPU: JIT-compile Metal shaders with a tiny dummy inference.
-                // Async so this cooperative-pool task isn't blocked during warmup.
-                await bridge.warmup()
 
                 await MainActor.run {
                     guard self.modelLoadGeneration == generation else { return }
-                    self.whisperBridge = bridge
+                    self.engine = loaded
                     self.isModelLoaded = true
                     self.modelLoadError = nil
                 }
@@ -191,7 +218,7 @@ final class DictationEngine {
         pendingModelReload = false
         isModelLoaded = false
         modelLoadError = nil
-        whisperBridge = nil
+        engine = nil
         loadModelAsync()
     }
 
@@ -288,7 +315,7 @@ final class DictationEngine {
         if let liveFlagForDrain = drainCancelFlag {
             liveFlagForDrain.cancel()
         } else {
-            whisperBridge?.cancelTranscription()
+            engine?.cancelTranscription()
         }
     }
 
@@ -474,7 +501,7 @@ final class DictationEngine {
 
         state = .processing
 
-        let bridge = self.whisperBridge
+        let bridge = self.engine
         let prompt = Self.buildPrompt(
             base: AppSettings.shared.vocabularyPrompt,
             customTerms: AppSettings.shared.customTerms
@@ -524,7 +551,9 @@ final class DictationEngine {
                 _ = try await bridge.transcribe(
                     audioBuffer: audioBuffer,
                     prompt: prompt,
-                    language: AppSettings.shared.dictationLanguage
+                    language: AppSettings.shared.dictationLanguage,
+                    cancelFlag: nil,
+                    vad: true
                 ) { segment in
                     let corrected = TextPipeline.shared.process(segment)
                     // Never log transcribed content — it's the user's private dictation.
@@ -592,7 +621,7 @@ final class DictationEngine {
     private func startLiveSessionIfEnabled() -> Bool {
         guard AppSettings.shared.liveDictationEnabled,
               let vadPath = ModelManager.shared.vadModelPath(),
-              let bridge = whisperBridge else { return false }
+              let bridge = engine else { return false }
         do {
             let segmenter = try VADSegmenter(vadModelPath: vadPath)
             let sessionFlag = CancellationFlag()
@@ -637,7 +666,7 @@ final class DictationEngine {
     /// never be taken here or queued typing gets stranded).
     private func runLiveConsumer(
         stream: AsyncStream<LiveWorkItem>,
-        bridge: WhisperBridge,
+        bridge: any TranscriptionEngine,
         sessionFlag: CancellationFlag,
         sessionID: UUID,
         useClipboard: Bool
@@ -771,7 +800,8 @@ final class DictationEngine {
     /// on the main actor, which is blocked in this very handler. The segmenter's
     /// VAD context is CPU-only (not implicated in the Metal assert); its release
     /// through teardown stays best-effort.
-    private func prepareForTermination() {
+    /// Не private: зовётся из App-слоя по `NSApplication.willTerminateNotification`.
+    func prepareForTermination() {
         fputs("[DictationEngine] Terminating — freeing whisper context\n", stderr)
         audioCapture.onSamples = nil
         if audioCapture.isRecording { _ = audioCapture.stopRecording() }
@@ -779,9 +809,9 @@ final class DictationEngine {
         // abort instead of starting fresh decodes (same rule as teardownLiveSession).
         liveSessionFlag?.cancel()
         teardownLiveSession()
-        whisperBridge?.shutdownAndFree()
-        whisperBridge = nil
-        fputs("[DictationEngine] Whisper context freed\n", stderr)
+        engine?.shutdown()
+        engine = nil
+        fputs("[DictationEngine] Engine released\n", stderr)
     }
 
     /// Full teardown for paths where the consumer must ALSO stop (start

@@ -1,10 +1,13 @@
 name: CI
 
+# Ветки `main` в этом репозитории нет: дефолтная ветка форка — ru-dictation.
+# Пока здесь стояло [main], CI не запускался ни разу (gh run list был пуст),
+# и PR приходили без единой проверки.
 on:
   push:
-    branches: [main]
+    branches: [ru-dictation, 'feat/**']
   pull_request:
-    branches: [main]
+    branches: [ru-dictation]
 
 permissions:
   contents: read
@@ -34,14 +37,17 @@ jobs:
             ./scripts/build-whisper.sh
           fi
 
-      - name: Build app
+      # Быстрый whisper-only путь: проверяет, что swiftc-сборка из Makefile не
+      # разъехалась (она собирает без SPM). Полную сборку со всеми движками
+      # компилирует job `test` через xcodebuild — там подключается FluidAudio.
+      - name: Build app (whisper-only path)
         run: make app
 
       - name: Upload artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: WhisperDictation.app
-          path: build/WhisperDictation.app
+          name: Flowka.app
+          path: build/Flowka.app
 
   test:
     runs-on: macos-15

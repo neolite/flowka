@@ -9,9 +9,17 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     enum HotkeyMode: String { case pushToTalk, toggle }
 
+    // MARK: - ASR Engine
+
+    /// Движок распознавания. `whisper` — дефолт (whisper.cpp, текущий);
+    /// `parakeetV3` — Parakeet TDT v3 через FluidAudio (точнее на русском,
+    /// ~20-40x realtime; модель качается с HuggingFace при первом запуске).
+    enum ASREngine: String { case whisper, parakeetV3 }
+
     // MARK: - Keys
 
     private enum Key: String {
+        case asrEngine
         case hotkeyKeyCode
         case hotkeyMode
         case toggleHoldDuration
@@ -32,16 +40,31 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
         case useClipboardInsertion
     }
 
+    // MARK: - Движок распознавания
+
+    /// Выбранный ASR-движок. Дефолт — `whisper` (менять поведение существующих
+    /// установок нельзя). Смена значения требует пересоздания движка в
+    /// `DictationEngine` (см. `reloadModel()`).
+    var asrEngine: ASREngine {
+        get {
+            let raw = defaults.string(forKey: Key.asrEngine.rawValue) ?? ASREngine.whisper.rawValue
+            return ASREngine(rawValue: raw) ?? .whisper
+        }
+        set { defaults.set(newValue.rawValue, forKey: Key.asrEngine.rawValue); objectWillChange.send() }
+    }
+
     // MARK: - Способ вставки
 
     /// Вставлять через буфер обмена и ⌘V вместо синтетических клавиш.
     ///
-    /// По умолчанию включено: синтетические Unicode-события приложение вправе
-    /// проигнорировать (это документировано Apple), и в Electron-приложениях
-    /// с терминалами так и происходит. Побочный эффект режима — текст
-    /// появляется целиком после отпускания клавиши, а не по мере распознавания.
+    /// Дефолт ВЫКЛ (прямая печать): живой режим печатает текст по мере
+    /// распознавания — это несовместимо с clipboard-вставкой, которая
+    /// выкладывает всё целиком только после отпускания клавиши. Компромисс:
+    /// синтетические Unicode-события приложение вправе проигнорировать (это
+    /// документировано Apple) — в Electron-приложениях с терминалами так и
+    /// бывает; там включи этот тумблер вручную, но живого набегания уже не будет.
     var useClipboardInsertion: Bool {
-        get { defaults.object(forKey: Key.useClipboardInsertion.rawValue) as? Bool ?? true }
+        get { defaults.object(forKey: Key.useClipboardInsertion.rawValue) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.useClipboardInsertion.rawValue); objectWillChange.send() }
     }
 
@@ -170,7 +193,10 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
     /// pauses instead of everything at stop. Default false. Stores intent —
     /// the engine additionally requires the VAD model on disk per session.
     var liveDictationEnabled: Bool {
-        get { defaults.bool(forKey: Key.liveDictationEnabled.rawValue) }
+        // Дефолт ВКЛ: с Parakeet v3 живой режим набегает по фразам. Гейт
+        // безопасный — нет VAD-модели или движок без потоковой обвязки → тихий
+        // фолбэк в обычный режим (см. startLiveSessionIfEnabled).
+        get { defaults.object(forKey: Key.liveDictationEnabled.rawValue) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.liveDictationEnabled.rawValue); objectWillChange.send() }
     }
 
@@ -199,6 +225,48 @@ final class AppSettings: ObservableObject, @unchecked Sendable {
 
     func removeCustomTerm(_ term: String) {
         customTerms = customTerms.filter { $0 != term }
+    }
+
+    // MARK: - Словарь для Parakeet v3 (CTC-boost)
+
+    /// Список латинских термов для `CustomVocabularyContext` FluidAudio.
+    ///
+    /// У Parakeet v3 нет `initial_prompt`, поэтому стилевой промпт не переносим —
+    /// только СПИСОК термов. Источник термов — наш глоссарий (канонические
+    /// написания `GlossaryCleaner`), пользовательские правила словаря и
+    /// пользовательские термы. Так словарь v3 остаётся синхронным с тем, что
+    /// whisper-путь чинит через `GlossaryCleaner`.
+    ///
+    /// Чистая и статическая — тестируется без движка и без FluidAudio.
+    static func parakeetVocabularyTerms(
+        glossaryDefaultCanonicals: [String],
+        glossaryRuleCanonicals: [String],
+        customTerms: [String]
+    ) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for term in glossaryDefaultCanonicals + glossaryRuleCanonicals + customTerms {
+            let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            result.append(trimmed)
+        }
+        return result
+    }
+
+    /// Собранный список термов из текущих настроек и глоссария.
+    var parakeetVocabularyTerms: [String] {
+        let ruleCanonicals = GlossaryCleaner.parseRules(from: glossaryRules).map(\.canonical)
+        let defaultCanonicals = glossaryEnabled
+            ? GlossaryCleaner.defaultRules.map(\.canonical)
+            : []
+        return Self.parakeetVocabularyTerms(
+            glossaryDefaultCanonicals: defaultCanonicals,
+            glossaryRuleCanonicals: glossaryEnabled ? ruleCanonicals : [],
+            customTerms: customTerms
+        )
     }
 
     /// nil means "use system default"

@@ -27,7 +27,9 @@ SWIFT_FILES := \
 	WhisperDictation/Utilities/Settings.swift \
 	WhisperDictation/Utilities/KeyCodeNames.swift \
 	WhisperDictation/Utilities/AppInfo.swift \
+	WhisperDictation/Engine/TranscriptionEngine.swift \
 	WhisperDictation/Engine/WhisperBridge.swift \
+	WhisperDictation/Engine/FluidAudioEngine.swift \
 	WhisperDictation/Engine/AudioCapture.swift \
 	WhisperDictation/Engine/TextInjector.swift \
 	WhisperDictation/Engine/SoundFeedback.swift \
@@ -36,6 +38,7 @@ SWIFT_FILES := \
 	WhisperDictation/Engine/GlossaryCleaner.swift \
 	WhisperDictation/Engine/TextPipeline.swift \
 	WhisperDictation/Engine/VADSegmenter.swift \
+	WhisperDictation/Engine/AccessibilityPoller.swift \
 	WhisperDictation/Utilities/HotkeyMonitor.swift \
 	WhisperDictation/Utilities/PermissionManager.swift \
 	WhisperDictation/Utilities/LaunchAtLoginHelper.swift \
@@ -120,7 +123,15 @@ app: $(BUILD_DIR)/WhisperDictation
 run: app
 	open "$(APP_BUNDLE)"
 
-dmg: app
+# Релизная сборка: universal и со всеми движками. Отдельная цель, потому что
+# `app` — это быстрый whisper-only путь через swiftc, куда Parakeet не попадает
+# (SPM там недоступен). Подробности — в самом скрипте.
+release:
+	./scripts/build-release.sh
+
+# Зависит от `release`, а не от `app`: иначе в DMG уезжало бы приложение без
+# движка, включённого по умолчанию.
+dmg: release
 	./scripts/create-dmg.sh
 
 clean:

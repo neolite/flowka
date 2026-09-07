@@ -45,8 +45,16 @@ final class PermissionManager: ObservableObject, @unchecked Sendable {
 
     // MARK: - Accessibility
 
+    /// Единственное место, где приложение спрашивает у системы про AX-доступ.
+    /// Статический, потому что `DictationEngine` спрашивает то же самое, но
+    /// ему не нужен ни экземпляр менеджера, ни его `@Published`-состояние —
+    /// раньше он звал `AXIsProcessTrusted()` сам, и источников правды было два.
+    static func isProcessTrusted() -> Bool {
+        AXIsProcessTrusted()
+    }
+
     func checkAccessibility() {
-        accessibilityGranted = AXIsProcessTrusted()
+        accessibilityGranted = Self.isProcessTrusted()
     }
 
     func openAccessibilitySettings() {
