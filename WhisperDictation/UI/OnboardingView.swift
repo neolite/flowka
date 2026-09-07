@@ -192,7 +192,13 @@ struct OnboardingView: View {
                 onDownload: startParakeetDownload
             )
 
-            if let error = engine.modelLoadError {
+            // Только про нашу попытку. У нового пользователя движок стартует на
+            // whisper, модели которого ещё нет, и `modelLoadError` уже держит
+            // «No model found. Open Settings to download a model.» — показывать
+            // это под кнопкой «Download» значит ругаться на пользователя за то,
+            // чего он ещё не делал. `performModelReload()` гасит ошибку в момент
+            // нажатия, так что дальше здесь только правда про Parakeet.
+            if didStartModelDownload, let error = engine.modelLoadError {
                 onboardingError(error)
             }
         }

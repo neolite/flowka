@@ -71,7 +71,14 @@ final class FluidAudioEngine: TranscriptionEngine, @unchecked Sendable {
         // экран онбординга секундами висел бы на пустом нуле.
         // Сырые события пакета склеивает трекер: доля там считается на каждую
         // модель отдельно и без него полоса откатывалась бы назад.
-        let tracker = EngineLoadProgressTracker(totalModels: AsrModels.requiredModelNames.count)
+        // Именно V3-набор, а не `AsrModels.requiredModelNames`: то — список для
+        // v2, и совпадение по длине (обе четвёрки) держится только до тех пор,
+        // пока пакет не поменяет состав одной из версий. Знаменатель у полосы
+        // должен приходить оттуда же, откуда список компилируемых моделей.
+        // Точность энкодера на количество не влияет — в наборе всегда 4 имени.
+        let tracker = EngineLoadProgressTracker(
+            totalModels: ModelNames.ASR.requiredModelsV3().count
+        )
         onProgress?(tracker.update(phase: .listing, rawFraction: nil))
         let models = try await AsrModels.downloadAndLoad(
             version: .v3,
