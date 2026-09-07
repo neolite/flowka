@@ -38,6 +38,7 @@ SWIFT_FILES := \
 	WhisperDictation/Engine/GlossaryCleaner.swift \
 	WhisperDictation/Engine/TextPipeline.swift \
 	WhisperDictation/Engine/VADSegmenter.swift \
+	WhisperDictation/Engine/AccessibilityPoller.swift \
 	WhisperDictation/Utilities/HotkeyMonitor.swift \
 	WhisperDictation/Utilities/PermissionManager.swift \
 	WhisperDictation/Utilities/LaunchAtLoginHelper.swift \

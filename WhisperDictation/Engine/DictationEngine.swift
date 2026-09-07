@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import Cocoa
 
 enum DictationState: String {
     case idle
@@ -63,8 +62,14 @@ final class DictationEngine {
     /// before the threshold; cleared after firing.
     private var holdWorkItem: DispatchWorkItem?
 
-    init() {
-        let axTrusted = AXIsProcessTrusted()
+    /// Источник факта «AX-доступ выдан». Инъекция, а не прямой вызов
+    /// `AXIsProcessTrusted()`: так поллер доступа проверяется тестом, а не
+    /// только вручную через System Settings.
+    private let isAccessibilityTrusted: () -> Bool
+
+    init(isAccessibilityTrusted: @escaping () -> Bool = PermissionManager.isProcessTrusted) {
+        self.isAccessibilityTrusted = isAccessibilityTrusted
+        let axTrusted = isAccessibilityTrusted()
         fputs("[DictationEngine] Init. Accessibility: \(axTrusted)\n", stderr)
         audioCapture.onLevel = { [weak self] level in
             // The tap callback is not main-actor isolated. Read and mutate the
@@ -88,19 +93,9 @@ final class DictationEngine {
         loadModelAsync()
         LaunchAtLoginHelper.reconcile()
 
-        // Free whisper's Metal-backed contexts before exit(): NSApplication's
-        // terminate path never runs Swift deinits, and ggml aborts at exit
-        // (GGML_ASSERT in ggml_metal_rsets_free) if Metal resources are still
-        // alive when its static device registry is destroyed. Posted on the
-        // main thread; the engine lives for the whole process, so the observer
-        // is never removed.
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            self?.prepareForTermination()
-        }
+        // Подписка на завершение приложения переехала в App-слой
+        // (`WhisperDictationApp.init`) — почему именно туда и почему её нельзя
+        // просто убрать, описано там же, рядом с регистрацией.
 
         if !axTrusted {
             startAccessibilityPoller()
@@ -109,12 +104,21 @@ final class DictationEngine {
 
     private func startAccessibilityPoller() {
         accessibilityPoller?.invalidate()
-        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
-            if AXIsProcessTrusted() {
+        // Решение «доступ появился» вынесено в `AccessibilityPoller` и покрыто
+        // тестом; здесь остаётся только механика — как часто спрашивать и когда
+        // погасить таймер.
+        let poller = AccessibilityPoller(
+            isTrusted: isAccessibilityTrusted,
+            onGranted: { [weak self] in
                 fputs("[DictationEngine] Accessibility granted! Restarting hotkey monitor.\n", stderr)
+                self?.restartHotkeyMonitor()
+            }
+        )
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] timer in
+            poller.tick()
+            if poller.isFinished {
                 timer.invalidate()
                 self?.accessibilityPoller = nil
-                self?.restartHotkeyMonitor()
             }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -796,7 +800,8 @@ final class DictationEngine {
     /// on the main actor, which is blocked in this very handler. The segmenter's
     /// VAD context is CPU-only (not implicated in the Metal assert); its release
     /// through teardown stays best-effort.
-    private func prepareForTermination() {
+    /// Не private: зовётся из App-слоя по `NSApplication.willTerminateNotification`.
+    func prepareForTermination() {
         fputs("[DictationEngine] Terminating — freeing whisper context\n", stderr)
         audioCapture.onSamples = nil
         if audioCapture.isRecording { _ = audioCapture.stopRecording() }

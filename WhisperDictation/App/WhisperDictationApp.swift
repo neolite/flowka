@@ -2,7 +2,29 @@ import SwiftUI
 
 @main
 struct WhisperDictationApp: App {
-    @State private var engine = DictationEngine()
+    @State private var engine: DictationEngine
+
+    init() {
+        let engine = DictationEngine()
+        _engine = State(initialValue: engine)
+
+        // Free whisper's Metal-backed contexts before exit(): NSApplication's
+        // terminate path never runs Swift deinits, and ggml aborts at exit
+        // (GGML_ASSERT in ggml_metal_rsets_free) if Metal resources are still
+        // alive when its static device registry is destroyed. Posted on the
+        // main thread; the engine lives for the whole process, so the observer
+        // is never removed.
+        //
+        // Живёт здесь, а не в самом движке: `NSApplication` — это App-слой, и
+        // из-за одной этой подписки `DictationEngine` тянул `import Cocoa`.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            engine.prepareForTermination()
+        }
+    }
 
     var body: some Scene {
         MenuBarExtra {
