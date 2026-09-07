@@ -49,17 +49,48 @@ final class FluidAudioEngine: TranscriptionEngine, @unchecked Sendable {
 
     // MARK: - Загрузка (один раз)
 
+    /// Лежат ли модели v3 уже в кэше FluidAudio. Нужно онбордингу: без этого
+    /// он считает «модель есть» только по whisper-каталогу `ModelManager`, и
+    /// пользователь с готовым Parakeet проходил бы загрузку заново.
+    static var isModelDownloaded: Bool {
+        AsrModels.modelsExist(at: AsrModels.defaultCacheDirectory(for: .v3), version: .v3)
+    }
+
+
     /// Скачивает (при необходимости) и загружает модель v3, конфигурирует
     /// CTC-boost словаря и возвращает готовый движок. Тяжёлая операция — звать
     /// один раз при инициализации движка, НЕ на каждую фразу.
     static func make(
-        vocabTerms: [String]
+        vocabTerms: [String],
+        onProgress: (@Sendable (EngineLoadProgress) -> Void)? = nil
     ) async throws -> FluidAudioEngine {
         fputs("[FluidAudioEngine] Loading Parakeet v3 models…\n", stderr)
         // Первый запуск качает ~470МБ с HuggingFace (нужна сеть); далее берётся
-        // из кэша `~/Library/Application Support/FluidAudio`. Прогресс-хендлер
-        // пока не прокидываем в UI (см. отчёт: индикация загрузки — TODO).
-        let models = try await AsrModels.downloadAndLoad(version: .v3)
+        // из кэша `~/Library/Application Support/FluidAudio`. До первого ответа
+        // HF размер неизвестен, поэтому начинаем с неопределённой фазы, иначе
+        // экран онбординга секундами висел бы на пустом нуле.
+        // Сырые события пакета склеивает трекер: доля там считается на каждую
+        // модель отдельно и без него полоса откатывалась бы назад.
+        // Именно V3-набор, а не `AsrModels.requiredModelNames`: то — список для
+        // v2, и совпадение по длине (обе четвёрки) держится только до тех пор,
+        // пока пакет не поменяет состав одной из версий. Знаменатель у полосы
+        // должен приходить оттуда же, откуда список компилируемых моделей.
+        // Точность энкодера на количество не влияет — в наборе всегда 4 имени.
+        let tracker = EngineLoadProgressTracker(
+            totalModels: ModelNames.ASR.requiredModelsV3().count
+        )
+        onProgress?(tracker.update(phase: .listing, rawFraction: nil))
+        let models = try await AsrModels.downloadAndLoad(
+            version: .v3,
+            progressHandler: { progress in
+                onProgress?(
+                    tracker.update(
+                        phase: Self.rawPhase(from: progress.phase),
+                        rawFraction: progress.fractionCompleted
+                    )
+                )
+            }
+        )
         let config = ASRConfig(
             tdtConfig: TdtConfig(blankId: AsrModelVersion.v3.blankId),
             encoderHiddenSize: AsrModelVersion.v3.encoderHiddenSize
@@ -69,9 +100,27 @@ final class FluidAudioEngine: TranscriptionEngine, @unchecked Sendable {
 
         let engine = FluidAudioEngine(manager: manager, vocabTerms: vocabTerms)
         engine.decoderLayers = await manager.decoderLayerCount
+        // Догрузка CTC-моделей идёт вслепую: у `CtcModels.downloadAndLoad`
+        // прогресс-хендлера в FluidAudio нет. Показываем честную неопределённую
+        // фазу вместо застывшего «100%».
+        onProgress?(tracker.update(phase: .configuringVocabulary, rawFraction: nil))
         await engine.configureBoostingIfPossible()
         fputs("[FluidAudioEngine] Ready (decoderLayers: \(engine.decoderLayers))\n", stderr)
         return engine
+    }
+
+    /// Перевод фаз FluidAudio в наш UI-тип. Единственное место, где типы
+    /// библиотеки просачиваются наружу движка, — дальше по коду только
+    /// `EngineLoadProgress`, который собирается и без FluidAudio.
+    private static func rawPhase(from phase: DownloadPhase) -> EngineLoadProgressTracker.RawPhase {
+        switch phase {
+        case .listing:
+            return .listing
+        case .downloading(let completedFiles, let totalFiles):
+            return .downloading(completed: completedFiles, total: totalFiles)
+        case .compiling(let modelName):
+            return .compiling(model: modelName)
+        }
     }
 
     /// Настраивает CTC keyword-spotter + rescorer из наших термов. Требует

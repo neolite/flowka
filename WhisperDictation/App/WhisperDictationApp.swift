@@ -71,11 +71,23 @@ private struct MenuBarLabel: View {
             }
     }
 
+    /// В сборке без FluidAudio (голый `make app`) Parakeet недоступен в принципе.
+    private static var hasParakeetModel: Bool {
+        #if canImport(FluidAudio)
+        return FluidAudioEngine.isModelDownloaded
+        #else
+        return false
+        #endif
+    }
+
     private func presentOnboardingIfNeeded() {
         let settings = AppSettings.shared
         guard !settings.hasCompletedOnboarding else { return }
 
-        let hasAnyModel = !ModelManager.shared.downloadedModels().isEmpty
+        // Модель может лежать в двух разных местах: whisper — в каталоге
+        // `ModelManager`, Parakeet — в кэше FluidAudio. Учитывая только первый,
+        // мы гнали пользователя с уже скачанным Parakeet качать модель заново.
+        let hasAnyModel = !ModelManager.shared.downloadedModels().isEmpty || Self.hasParakeetModel
         if OnboardingView.shouldShowOnboarding(hasCompleted: settings.hasCompletedOnboarding, hasAnyModel: hasAnyModel) {
             openWindow(id: "onboarding")
             NSApp.activate(ignoringOtherApps: true)
