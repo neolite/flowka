@@ -22,6 +22,14 @@ final class DictationEngine {
     private(set) var isModelLoaded: Bool = false
     private(set) var modelLoadError: String?
 
+    /// Ход подготовки движка, пока `isModelLoaded == false`. `nil` — либо всё
+    /// готово, либо загрузка не сообщает о себе (whisper грузится с диска
+    /// мгновенно, качает его `ModelManager` со своим прогрессом).
+    ///
+    /// Нужен онбордингу: Parakeet качает ~470МБ и потом ещё компилирует CoreML,
+    /// и без этого приложение просто молчало полторы минуты.
+    private(set) var engineLoadProgress: EngineLoadProgress?
+
     /// Last transcription/recording failure surfaced to the user (inference failure,
     /// audio input configuration change). Cleared when a new recording starts and on
     /// the next successful dictation.
@@ -157,12 +165,25 @@ final class DictationEngine {
                     // Модель v3 качается с HF при первом запуске (нужна сеть) и
                     // грузится ОДИН раз здесь. UI не блокируется: isModelLoaded
                     // взводится только после готовности.
-                    loaded = try await FluidAudioEngine.make(vocabTerms: vocabTerms)
+                    loaded = try await FluidAudioEngine.make(
+                        vocabTerms: vocabTerms,
+                        onProgress: { [weak self] progress in
+                            // Хендлер зовётся с произвольной очереди; состояние
+                            // движка — main-actor. Поколение проверяем и здесь:
+                            // иначе отменённая загрузка продолжала бы двигать
+                            // индикатор уже другой модели.
+                            Task { @MainActor in
+                                guard let self, self.modelLoadGeneration == generation else { return }
+                                self.engineLoadProgress = progress
+                            }
+                        }
+                    )
                     #else
                     // Сборка без FluidAudio (голый swiftc make app): v3 недоступен.
                     await MainActor.run {
                         guard self.modelLoadGeneration == generation else { return }
                         self.modelLoadError = "Parakeet v3 недоступен в этой сборке (собрана без FluidAudio). Переключитесь на whisper."
+                        self.engineLoadProgress = nil
                     }
                     return
                     #endif
@@ -171,6 +192,7 @@ final class DictationEngine {
                         await MainActor.run {
                             guard self.modelLoadGeneration == generation else { return }
                             self.modelLoadError = "No model found. Open Settings to download a model."
+                            self.engineLoadProgress = nil
                         }
                         return
                     }
@@ -186,11 +208,13 @@ final class DictationEngine {
                     self.engine = loaded
                     self.isModelLoaded = true
                     self.modelLoadError = nil
+                    self.engineLoadProgress = nil
                 }
             } catch {
                 await MainActor.run {
                     guard self.modelLoadGeneration == generation else { return }
                     self.modelLoadError = "Failed to load model: \(error.localizedDescription)"
+                    self.engineLoadProgress = nil
                 }
             }
         }
@@ -218,6 +242,7 @@ final class DictationEngine {
         pendingModelReload = false
         isModelLoaded = false
         modelLoadError = nil
+        engineLoadProgress = nil
         engine = nil
         loadModelAsync()
     }

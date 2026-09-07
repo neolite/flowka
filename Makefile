@@ -39,6 +39,8 @@ SWIFT_FILES := \
 	WhisperDictation/Engine/TextPipeline.swift \
 	WhisperDictation/Engine/VADSegmenter.swift \
 	WhisperDictation/Engine/AccessibilityPoller.swift \
+	WhisperDictation/Engine/EngineLoadProgress.swift \
+	WhisperDictation/Engine/EngineLoadProgressTracker.swift \
 	WhisperDictation/Utilities/HotkeyMonitor.swift \
 	WhisperDictation/Utilities/PermissionManager.swift \
 	WhisperDictation/Utilities/LaunchAtLoginHelper.swift \
@@ -130,7 +132,7 @@ release:
 	./scripts/build-release.sh
 
 # Зависит от `release`, а не от `app`: иначе в DMG уезжало бы приложение без
-# движка, включённого по умолчанию.
+# Parakeet — движка, который онбординг выставляет новому пользователю.
 dmg: release
 	./scripts/create-dmg.sh
 
