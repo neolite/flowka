@@ -30,3 +30,12 @@ python3 scripts/bench/wer.py out.json        # прогон + пословный
 | `E-` | английские фразы |
 
 Замеренные значения — в `docs/research/asr-measurements.md`.
+
+## Сравнение энкодеров Parakeet
+
+`wer_swap.sh <путь к .mlmodelc> <out.json>` временно подменяет энкодер в кэше
+FluidAudio, гоняет корпус и **возвращает оригинал через trap** — прерывание
+скрипта кэш не портит.
+
+Прогнаны все три энкодера из `config.json` модели; результаты и разбор — в
+`docs/research/asr-measurements.md`.
