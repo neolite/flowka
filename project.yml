@@ -18,12 +18,17 @@ settings:
 # ревизию склонированного пакета — ту, на которой замерялся спайк (5c19d5e).
 packages:
   FluidAudio:
-    # ЛОКАЛЬНЫЙ чекаут пакета (ревизия 5c19d5e, ветка main — та, на которой
-    # замерялся спайк). Через git-URL xcodebuild фетчил пакет по вялому VPN и
-    # залипал; локальный path убирает сетевой фетч самого FluidAudio. Для
-    # РЕЛИЗА заменить на url+revision (см. отчёт). Транзитивный бинарный
-    # xcframework NemoTextProcessing всё равно тянется с github-releases.
-    path: /private/tmp/claude-501/-Users-rafkat/8d0d4f24-a5f0-47ca-9e5d-92feb02df3f7/scratchpad/FluidAudio
+    # Пин на ревизию, на которой замерялся спайк (5c19d5e, HEAD ветки main).
+    #
+    # Раньше здесь стоял `path:` на локальный чекаут во временном каталоге
+    # сессии — так обходился залипающий по вялому VPN сетевой фетч. Временный
+    # каталог удалили, пакет перестал резолвиться, и сборка через xcodebuild
+    # слегла. Поэтому теперь url+revision: воспроизводимо на любой машине.
+    #
+    # Если фетч снова начнёт залипать — не возвращать `path:` на временный
+    # каталог; клонировать в постоянное место и указывать его.
+    url: https://github.com/FluidInference/FluidAudio
+    revision: 5c19d5e12320e22bbfb7a1877b089d2665a69add
 
 targets:
   WhisperDictation:
@@ -73,6 +78,11 @@ targets:
     info:
       path: WhisperDictation/Info.plist
       properties:
+        # Версия задаётся здесь, а не только в Info.plist: `xcodegen generate`
+        # перезаписывает plist и без этих ключей откатывает версию на дефолтные
+        # 1.0/1, молча теряя реальную. Поднимая версию — править ОБА места.
+        CFBundleShortVersionString: "1.2.1"
+        CFBundleVersion: "12"
         LSUIElement: true
         NSMicrophoneUsageDescription: "WhisperDictation needs microphone access to capture your voice for speech-to-text transcription."
         NSPrincipalClass: NSApplication
