@@ -61,7 +61,10 @@ cp -R "$PRODUCT" "$APP_BUNDLE"
 # этом остаётся WhisperDictation: так называется файл в Contents/MacOS.
 /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$APP_BUNDLE/Contents/Info.plist"
 
-python3 scripts/generate-icon.py "$APP_BUNDLE/Contents/Resources" 2>/dev/null || true
+# Без `|| true`, в отличие от Makefile: там иконка — косметика для дев-сборки,
+# здесь молчаливый провал уехал бы в DMG безымянной заглушкой, и CI остался
+# бы зелёным. Пусть релиз падает громко.
+python3 scripts/generate-icon.py "$APP_BUNDLE/Contents/Resources"
 
 # Ad-hoc: у CI нет Developer ID. Для пользователя это означает предупреждение
 # Gatekeeper при первом запуске (обходится правым кликом → Open).
