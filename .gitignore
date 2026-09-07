@@ -40,3 +40,6 @@ docs/superpowers/
 
 # временная копия выкачки сайта Wispr для анализа, в репозиторий не идёт
 docs/research/_wispr-site/
+
+# Сгенерированное аудио бенч-корпуса (создаётся gen_corpus.py из текста)
+scripts/bench/corpus/
