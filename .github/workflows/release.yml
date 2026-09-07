@@ -24,7 +24,8 @@ jobs:
 
       # НЕ `make app`: тот путь идёт через голый swiftc, где нет SPM, и
       # FluidAudioEngine компилируется в пустоту под `#if canImport(FluidAudio)`.
-      # Собранный так DMG приезжал бы без Parakeet v3 — движка по умолчанию.
+      # Собранный так DMG приезжал бы без Parakeet v3 — а именно его онбординг
+      # скачивает и выставляет движком новому пользователю.
       - name: Build app (universal, все движки)
         run: ./scripts/build-release.sh
 

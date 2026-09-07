@@ -86,8 +86,8 @@ targets:
         # Версия задаётся здесь, а не только в Info.plist: `xcodegen generate`
         # перезаписывает plist и без этих ключей откатывает версию на дефолтные
         # 1.0/1, молча теряя реальную. Поднимая версию — править ОБА места.
-        CFBundleShortVersionString: "1.2.1"
-        CFBundleVersion: "12"
+        CFBundleShortVersionString: "1.3.0"
+        CFBundleVersion: "13"
         LSUIElement: true
         NSMicrophoneUsageDescription: "WhisperDictation needs microphone access to capture your voice for speech-to-text transcription."
         NSPrincipalClass: NSApplication
